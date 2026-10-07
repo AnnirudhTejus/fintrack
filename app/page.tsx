@@ -958,7 +958,7 @@ export default function DashboardPage() {
                     textAlign: 'right',
                   }}
                 >
-                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 700 }}>Balance</div>
+                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 700 }}>Closing</div>
                   {formatBalance(wallet.closing)}
                 </div>
               </Link>

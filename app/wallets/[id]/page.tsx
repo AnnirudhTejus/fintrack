@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { walletBalance } from '@/lib/walletBalance'
+import { walletPeriodSummary } from '@/lib/walletBalance'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
 import ConfirmModal from '@/components/ConfirmModal'
 import Toast from '@/components/Toast'
@@ -525,10 +525,12 @@ export default function WalletLedgerPage() {
     })
   }, [displayRows, typeFilter, filterDateFrom, filterDateTo, transferFlowFilter])
 
-  const currentBalance = useMemo(() => {
-    if (!wallet) return 0
-    return walletBalance(wallet, transactions)
-  }, [wallet, transactions])
+  // Opening and closing balance for the selected dates. Type and category
+  // filters do not change these: a balance always includes every transaction.
+  const periodBalance = useMemo(() => {
+    if (!wallet) return { opening: 0, moneyIn: 0, moneyOut: 0, closing: 0 }
+    return walletPeriodSummary(wallet, transactions, filterDateFrom || null, filterDateTo || null)
+  }, [wallet, transactions, filterDateFrom, filterDateTo])
 
   const summaryTotals = useMemo(() => {
     let moneyIn = 0
@@ -1016,29 +1018,23 @@ export default function WalletLedgerPage() {
             <div
               style={{
                 minWidth: '150px',
-                border: '1px solid #bfdbfe',
+                border: '1px solid #e5e7eb',
                 borderRadius: '14px',
-                background: '#eff6ff',
+                background: '#f8fafc',
                 padding: '14px 16px',
               }}
             >
-              <div style={{ fontSize: '13px', color: '#1d4ed8', marginBottom: '6px', fontWeight: 700 }}>
-                Balance
+              <div style={{ fontSize: '13px', color: '#475569', marginBottom: '6px', fontWeight: 700 }}>
+                Opening
               </div>
               <div
                 style={{
                   fontSize: '1.15rem',
                   fontWeight: 800,
-                  color: currentBalance >= 0 ? '#1d4ed8' : '#b91c1c',
+                  color: periodBalance.opening >= 0 ? '#0f172a' : '#b91c1c',
                 }}
               >
-                {formatCurrency(currentBalance)}
-              </div>
-              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', fontWeight: 600 }}>
-                Opening {formatCurrency(Number(wallet.opening_balance) || 0)}
-                {wallet.opening_balance_date
-                  ? ` as at ${formatDateShort(wallet.opening_balance_date)}`
-                  : ''}
+                {formatCurrency(periodBalance.opening)}
               </div>
             </div>
 
@@ -1096,6 +1092,29 @@ export default function WalletLedgerPage() {
                 }}
               >
                 {formatCurrency(summaryTotals.net)}
+              </div>
+            </div>
+
+            <div
+              style={{
+                minWidth: '150px',
+                border: '1px solid #bfdbfe',
+                borderRadius: '14px',
+                background: '#eff6ff',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '13px', color: '#1d4ed8', marginBottom: '6px', fontWeight: 700 }}>
+                Closing
+              </div>
+              <div
+                style={{
+                  fontSize: '1.15rem',
+                  fontWeight: 800,
+                  color: periodBalance.closing >= 0 ? '#1d4ed8' : '#b91c1c',
+                }}
+              >
+                {formatCurrency(periodBalance.closing)}
               </div>
             </div>
           </div>
