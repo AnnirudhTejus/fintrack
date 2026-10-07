@@ -56,6 +56,7 @@ type WalletSummaryItem = {
   name: string
   type: WalletRow['type']
   current: number
+  showBalances: boolean
   opening: number | null
   moneyIn: number
   moneyOut: number
@@ -410,15 +411,22 @@ export default function DashboardPage() {
 
     return wallets
       .filter((wallet) => wallet.is_archived !== true)
-      .map((wallet) => ({
-        id: wallet.id,
-        name: wallet.name,
-        type: wallet.type,
-        current: walletBalance(wallet, transactions, today),
-        ...walletPeriodSummary(wallet, transactions, from, to),
-      }))
+      .map((wallet) => {
+        const period = walletPeriodSummary(wallet, transactions, from, to)
+
+        return {
+          id: wallet.id,
+          name: wallet.name,
+          type: wallet.type,
+          current: walletBalance(wallet, transactions, today),
+          // A month always shows Opening and Closing (a dash when not known).
+          // Longer filters show them only when the app knows the opening balance.
+          showBalances: timeFilter === 'month' || (period.opening !== null && period.closing !== null),
+          ...period,
+        }
+      })
       .sort((a, b) => Math.abs(b.current) - Math.abs(a.current))
-  }, [transactions, wallets, currentRange.start, currentRange.end])
+  }, [transactions, wallets, currentRange.start, currentRange.end, timeFilter])
 
   const expenseBreakdown = useMemo(() => {
     const expenseRows = filteredTransactions.filter((tx) => tx.type === 'Expense')
@@ -562,6 +570,10 @@ export default function DashboardPage() {
   }, [timeFilter, customFrom, customTo, monthOffset])
 
   const todayLabel = formatDate(toInputDate(startOfDay(new Date())))
+
+  // A past month leads with that month's closing balance; today's balance moves to a small line.
+  const isPastMonth = timeFilter === 'month' && monthOffset < 0
+  const pastMonthEndLabel = currentRange.end ? formatDate(toInputDate(currentRange.end)) : ''
 
   const pageWrap: React.CSSProperties = {
     maxWidth: '1180px',
@@ -718,6 +730,20 @@ export default function DashboardPage() {
           gap: 3px 22px;
           font-size: 12px;
           color: #64748b;
+        }
+
+        .wallet-card-today {
+          grid-column: 1 / -1;
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          font-size: 12px;
+          color: #64748b;
+        }
+
+        .wallet-card-today b {
+          font-weight: 600;
+          font-variant-numeric: tabular-nums;
         }
 
         .wallet-card-figures > span {
@@ -1084,7 +1110,9 @@ export default function DashboardPage() {
         >
           <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Wallet Summary</h2>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
-            {currentLabel} · current balance as on {todayLabel}
+            {isPastMonth
+              ? `${currentLabel} · balance at end of ${pastMonthEndLabel}`
+              : `${currentLabel} · current balance as on ${todayLabel}`}
           </span>
         </div>
 
@@ -1111,27 +1139,46 @@ export default function DashboardPage() {
                   </span>
                 </span>
 
-                <span
-                  className="wallet-card-current"
-                  style={{ color: wallet.current >= 0 ? '#166534' : '#b91c1c' }}
-                >
-                  {formatBalance(wallet.current)}
-                </span>
+                {isPastMonth ? (
+                  <span className="wallet-card-current" style={{ color: '#334155' }}>
+                    {wallet.closing === null ? '–' : formatBalance(wallet.closing)}
+                  </span>
+                ) : (
+                  <span
+                    className="wallet-card-current"
+                    style={{ color: wallet.current >= 0 ? '#166534' : '#b91c1c' }}
+                  >
+                    {formatBalance(wallet.current)}
+                  </span>
+                )}
 
                 <span className="wallet-card-figures">
-                  <span>
-                    Opening <b>{formatAmount(wallet.opening)}</b>
-                  </span>
+                  {wallet.showBalances && (
+                    <span>
+                      Opening <b>{formatAmount(wallet.opening)}</b>
+                    </span>
+                  )}
                   <span style={{ color: '#166534' }}>
                     In <b style={{ color: '#166534' }}>{formatAmount(wallet.moneyIn)}</b>
                   </span>
-                  <span>
-                    Closing <b>{formatAmount(wallet.closing)}</b>
-                  </span>
+                  {wallet.showBalances && (
+                    <span>
+                      Closing <b>{formatAmount(wallet.closing)}</b>
+                    </span>
+                  )}
                   <span style={{ color: '#b91c1c' }}>
                     Out <b style={{ color: '#b91c1c' }}>{formatAmount(wallet.moneyOut)}</b>
                   </span>
                 </span>
+
+                {isPastMonth && (
+                  <span className="wallet-card-today">
+                    <span>Today, {todayLabel}</span>
+                    <b style={{ color: wallet.current >= 0 ? '#166534' : '#b91c1c' }}>
+                      {formatBalance(wallet.current)}
+                    </b>
+                  </span>
+                )}
               </Link>
             ))}
           </div>
