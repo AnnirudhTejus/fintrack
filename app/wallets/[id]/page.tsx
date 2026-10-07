@@ -528,7 +528,7 @@ export default function WalletLedgerPage() {
   // Opening and closing balance for the selected dates. Type and category
   // filters do not change these: a balance always includes every transaction.
   const periodBalance = useMemo(() => {
-    if (!wallet) return { opening: 0, moneyIn: 0, moneyOut: 0, closing: 0 }
+    if (!wallet) return { opening: null, moneyIn: 0, moneyOut: 0, closing: null }
     return walletPeriodSummary(wallet, transactions, filterDateFrom || null, filterDateTo || null)
   }, [wallet, transactions, filterDateFrom, filterDateTo])
 
@@ -1031,10 +1031,10 @@ export default function WalletLedgerPage() {
                 style={{
                   fontSize: '1.15rem',
                   fontWeight: 800,
-                  color: periodBalance.opening >= 0 ? '#0f172a' : '#b91c1c',
+                  color: (periodBalance.opening ?? 0) >= 0 ? '#0f172a' : '#b91c1c',
                 }}
               >
-                {formatCurrency(periodBalance.opening)}
+                {periodBalance.opening === null ? '–' : formatCurrency(periodBalance.opening)}
               </div>
             </div>
 
@@ -1111,10 +1111,10 @@ export default function WalletLedgerPage() {
                 style={{
                   fontSize: '1.15rem',
                   fontWeight: 800,
-                  color: periodBalance.closing >= 0 ? '#1d4ed8' : '#b91c1c',
+                  color: (periodBalance.closing ?? 0) >= 0 ? '#1d4ed8' : '#b91c1c',
                 }}
               >
-                {formatCurrency(periodBalance.closing)}
+                {periodBalance.closing === null ? '–' : formatCurrency(periodBalance.closing)}
               </div>
             </div>
           </div>

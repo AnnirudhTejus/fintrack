@@ -1,10 +1,15 @@
 // Single source of truth for wallet balances.
 //
 // A wallet has an opening balance "as at end of" an optional date.
-// - Date set:   only transactions dated AFTER that date count.
-// - Date blank: every transaction counts.
 //
-// Balance = opening balance + income - expense - investment + transfers in - transfers out
+// - Date set: that figure is the one known point. Balances after it are worked
+//   forward from the transactions. Within the month the date falls in, earlier
+//   days are worked backward from it. Any earlier month has no known balance
+//   and returns null, shown as a dash.
+// - Date blank: the wallet starts at the opening balance and every transaction counts.
+//
+// Money in and money out are always what actually moved in the period,
+// whether or not a balance is known for it.
 //
 // All dates are plain YYYY-MM-DD strings, so they compare correctly as text
 // and never shift with timezone.
@@ -24,10 +29,10 @@ export type BalanceTransaction = {
 }
 
 export type WalletPeriodSummary = {
-  opening: number
+  opening: number | null
   moneyIn: number
   moneyOut: number
-  closing: number
+  closing: number | null
 }
 
 function dateOnly(value: string) {
@@ -56,11 +61,53 @@ export function walletEffect(tx: BalanceTransaction, walletId: number) {
   return 0
 }
 
-// Transactions on or before the opening balance date are already inside the opening figure.
-export function countsTowardBalance(tx: BalanceTransaction, wallet: BalanceWallet) {
-  const openingDate = wallet.opening_balance_date ? dateOnly(wallet.opening_balance_date) : ''
-  if (!openingDate) return true
-  return dateOnly(tx.date) > openingDate
+function openingDateOf(wallet: BalanceWallet) {
+  return wallet.opening_balance_date ? dateOnly(wallet.opening_balance_date) : ''
+}
+
+// Balance at a cut-off. includeCutoffDay = true means "at the end of that day",
+// false means "at the start of that day". Returns null when it is not known.
+function balanceAt(
+  wallet: BalanceWallet,
+  transactions: BalanceTransaction[],
+  cutoff: string,
+  includeCutoffDay: boolean
+): number | null {
+  const openingDate = openingDateOf(wallet)
+  let balance = openingBalanceOf(wallet)
+
+  const isBeforeCutoff = (txDate: string) => (includeCutoffDay ? txDate <= cutoff : txDate < cutoff)
+
+  // No date: the wallet starts at the opening balance and everything counts.
+  if (!openingDate) {
+    transactions.forEach((tx) => {
+      if (isBeforeCutoff(dateOnly(tx.date))) balance += walletEffect(tx, wallet.id)
+    })
+    return balance
+  }
+
+  const cutoffIsAfterOpeningDate = includeCutoffDay ? cutoff >= openingDate : cutoff > openingDate
+
+  // On or after the known point: work forward.
+  if (cutoffIsAfterOpeningDate) {
+    transactions.forEach((tx) => {
+      const txDate = dateOnly(tx.date)
+      if (txDate > openingDate && isBeforeCutoff(txDate)) balance += walletEffect(tx, wallet.id)
+    })
+    return balance
+  }
+
+  // Earlier in the same month as the known point: work backward.
+  if (cutoff.slice(0, 7) === openingDate.slice(0, 7)) {
+    transactions.forEach((tx) => {
+      const txDate = dateOnly(tx.date)
+      if (txDate <= openingDate && !isBeforeCutoff(txDate)) balance -= walletEffect(tx, wallet.id)
+    })
+    return balance
+  }
+
+  // An earlier month: not known.
+  return null
 }
 
 // Opening and closing balance for a period, plus the money in and out between them.
@@ -71,33 +118,37 @@ export function walletPeriodSummary(
   from: string | null,
   to: string | null
 ): WalletPeriodSummary {
-  let opening = openingBalanceOf(wallet)
   let moneyIn = 0
   let moneyOut = 0
+  let lastDate = ''
 
   transactions.forEach((tx) => {
     const effect = walletEffect(tx, wallet.id)
     if (effect === 0) return
-    if (!countsTowardBalance(tx, wallet)) return
 
     const txDate = dateOnly(tx.date)
+    if (txDate > lastDate) lastDate = txDate
+    if (from && txDate < from) return
     if (to && txDate > to) return
-
-    if (from && txDate < from) {
-      opening += effect
-      return
-    }
 
     if (effect > 0) moneyIn += effect
     else moneyOut += -effect
   })
 
-  return {
-    opening,
-    moneyIn,
-    moneyOut,
-    closing: opening + moneyIn - moneyOut,
-  }
+  const openingDate = openingDateOf(wallet)
+
+  // With no start date the period begins before anything was recorded.
+  const opening = from
+    ? balanceAt(wallet, transactions, from, false)
+    : openingDate
+      ? null
+      : openingBalanceOf(wallet)
+
+  // With no end date the period runs to the latest thing recorded.
+  const endDate = to || (lastDate > openingDate ? lastDate : openingDate)
+  const closing = endDate ? balanceAt(wallet, transactions, endDate, true) : openingBalanceOf(wallet)
+
+  return { opening, moneyIn, moneyOut, closing }
 }
 
 // Balance at the end of a given day (or of everything recorded, if no day is given).
@@ -106,5 +157,5 @@ export function walletBalance(
   transactions: BalanceTransaction[],
   asOf: string | null = null
 ) {
-  return walletPeriodSummary(wallet, transactions, null, asOf).closing
+  return walletPeriodSummary(wallet, transactions, null, asOf).closing ?? openingBalanceOf(wallet)
 }

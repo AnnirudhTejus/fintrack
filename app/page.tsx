@@ -56,10 +56,10 @@ type WalletSummaryItem = {
   name: string
   type: WalletRow['type']
   current: number
-  opening: number
+  opening: number | null
   moneyIn: number
   moneyOut: number
-  closing: number
+  closing: number | null
 }
 
 type DisplayTransaction = {
@@ -85,7 +85,9 @@ function formatCurrencyCompact(value: number) {
 }
 
 // Same as formatBalance but without the RM prefix, for the small secondary figures.
-function formatAmount(value: number) {
+// A balance that is not known (before the wallet's opening date) shows as a dash.
+function formatAmount(value: number | null) {
+  if (value === null) return '–'
   const formatted = Math.abs(value).toLocaleString('en-MY', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
