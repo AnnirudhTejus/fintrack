@@ -7,6 +7,7 @@
 //   days are worked backward from it. Any earlier month has no known balance
 //   and returns null, shown as a dash.
 // - Date blank: the wallet starts at the opening balance and every transaction counts.
+//   Months before its first transaction have no balance and return null.
 //
 // Money in and money out are always what actually moved in the period,
 // whether or not a balance is known for it.
@@ -79,10 +80,16 @@ function balanceAt(
   const isBeforeCutoff = (txDate: string) => (includeCutoffDay ? txDate <= cutoff : txDate < cutoff)
 
   // No date: the wallet starts at the opening balance and everything counts.
+  // Months before its first transaction have nothing recorded, so no balance is shown.
   if (!openingDate) {
+    let firstDate = ''
     transactions.forEach((tx) => {
-      if (isBeforeCutoff(dateOnly(tx.date))) balance += walletEffect(tx, wallet.id)
+      if (walletEffect(tx, wallet.id) === 0) return
+      const txDate = dateOnly(tx.date)
+      if (!firstDate || txDate < firstDate) firstDate = txDate
+      if (isBeforeCutoff(txDate)) balance += walletEffect(tx, wallet.id)
     })
+    if (firstDate && cutoff.slice(0, 7) < firstDate.slice(0, 7)) return null
     return balance
   }
 
