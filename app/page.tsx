@@ -8,7 +8,7 @@ import TransactionForm, {
   TransactionFormValues,
   TransactionType,
 } from '@/components/TransactionForm'
-import { walletPeriodSummary } from '@/lib/walletBalance'
+import { walletBalance, walletPeriodSummary } from '@/lib/walletBalance'
 
 type PageTransactionType = TransactionType | 'Transfer'
 type TimeFilter = 'week' | 'month' | 'year' | 'all_time' | 'custom'
@@ -55,6 +55,7 @@ type WalletSummaryItem = {
   id: number
   name: string
   type: WalletRow['type']
+  current: number
   opening: number
   moneyIn: number
   moneyOut: number
@@ -119,7 +120,25 @@ function toInputDate(date: Date) {
   return `${year}-${month}-${day}`
 }
 
-function getDateRange(filter: TimeFilter, customFrom: string, customTo: string) {
+// The month the dashboard is showing. 0 = this month, -1 = last month, 1 = next month.
+function getSelectedMonth(monthOffset: number) {
+  const today = startOfDay(new Date())
+  return new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
+}
+
+function formatMonthLabel(monthOffset: number) {
+  return getSelectedMonth(monthOffset).toLocaleDateString('en-MY', {
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
+function getDateRange(
+  filter: TimeFilter,
+  customFrom: string,
+  customTo: string,
+  monthOffset: number
+) {
   const today = startOfDay(new Date())
 
   if (filter === 'week') {
@@ -128,8 +147,11 @@ function getDateRange(filter: TimeFilter, customFrom: string, customTo: string) 
   }
 
   if (filter === 'month') {
-    const start = new Date(today.getFullYear(), today.getMonth(), 1)
-    return { start, end: today }
+    const start = getSelectedMonth(monthOffset)
+    // This month runs up to today (balance so far). Any other month is the whole month.
+    if (monthOffset === 0) return { start, end: today }
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
+    return { start, end }
   }
 
   if (filter === 'year') {
@@ -204,6 +226,8 @@ export default function DashboardPage() {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('month')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const [monthOffset, setMonthOffset] = useState(0)
+  const [openWalletIds, setOpenWalletIds] = useState<number[]>([])
 
   const [showForm, setShowForm] = useState(false)
   const [formInitialValues, setFormInitialValues] = useState<TransactionFormInitialValues>({
@@ -302,14 +326,19 @@ export default function DashboardPage() {
   }, [vendors])
 
   const currentRange = useMemo(
-    () => getDateRange(timeFilter, customFrom, customTo),
-    [timeFilter, customFrom, customTo]
+    () => getDateRange(timeFilter, customFrom, customTo, monthOffset),
+    [timeFilter, customFrom, customTo, monthOffset]
   )
 
-  const previousRange = useMemo(
-    () => getPreviousRange(currentRange.start, currentRange.end),
-    [currentRange.start, currentRange.end]
-  )
+  const previousRange = useMemo(() => {
+    // A whole past or future month is compared with the whole month before it.
+    if (timeFilter === 'month' && monthOffset !== 0 && currentRange.start) {
+      const start = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth() - 1, 1)
+      const end = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth(), 0)
+      return { start, end }
+    }
+    return getPreviousRange(currentRange.start, currentRange.end)
+  }, [timeFilter, monthOffset, currentRange.start, currentRange.end])
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => dateInRange(tx.date, currentRange.start, currentRange.end))
@@ -362,6 +391,7 @@ export default function DashboardPage() {
   const walletSummary = useMemo<WalletSummaryItem[]>(() => {
     const from = currentRange.start ? toInputDate(currentRange.start) : null
     const to = currentRange.end ? toInputDate(currentRange.end) : null
+    const today = toInputDate(startOfDay(new Date()))
 
     return wallets
       .filter((wallet) => wallet.is_archived !== true)
@@ -369,9 +399,10 @@ export default function DashboardPage() {
         id: wallet.id,
         name: wallet.name,
         type: wallet.type,
+        current: walletBalance(wallet, transactions, today),
         ...walletPeriodSummary(wallet, transactions, from, to),
       }))
-      .sort((a, b) => Math.abs(b.closing) - Math.abs(a.closing))
+      .sort((a, b) => Math.abs(b.current) - Math.abs(a.current))
   }, [transactions, wallets, currentRange.start, currentRange.end])
 
   const expenseBreakdown = useMemo(() => {
@@ -499,20 +530,29 @@ export default function DashboardPage() {
     const today = startOfDay(new Date())
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
     setTimeFilter('month')
+    setMonthOffset(0)
     setCustomFrom(toInputDate(monthStart))
     setCustomTo(toInputDate(today))
   }
 
   const currentLabel = useMemo(() => {
     if (timeFilter === 'week') return 'This Week'
-    if (timeFilter === 'month') return 'This Month'
+    if (timeFilter === 'month') return formatMonthLabel(monthOffset)
     if (timeFilter === 'year') return 'This Year'
     if (timeFilter === 'all_time') return 'All Time'
     if (customFrom || customTo) {
       return `${customFrom || '...'} → ${customTo || '...'}`
     }
     return 'Custom'
-  }, [timeFilter, customFrom, customTo])
+  }, [timeFilter, customFrom, customTo, monthOffset])
+
+  function toggleWalletCard(walletId: number) {
+    setOpenWalletIds((ids) =>
+      ids.includes(walletId) ? ids.filter((id) => id !== walletId) : [...ids, walletId]
+    )
+  }
+
+  const todayLabel = formatDate(toInputDate(startOfDay(new Date())))
 
   const pageWrap: React.CSSProperties = {
     maxWidth: '1180px',
@@ -623,16 +663,71 @@ export default function DashboardPage() {
           margin-bottom: 16px;
         }
 
-        .wallet-summary-row {
-          border: 1px solid #f1f5f9;
-          border-radius: 10px;
-          padding: 12px;
+        .wallet-card-grid {
           display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 10px;
-          align-items: center;
-          text-decoration: none;
+          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: 12px;
+        }
+
+        .wallet-card {
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          background: #fff;
           color: #111827;
+          overflow: hidden;
+        }
+
+        .wallet-card-head {
+          width: 100%;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 4px 10px;
+          padding: 12px 14px;
+          border: none;
+          background: transparent;
+          color: inherit;
+          font: inherit;
+          text-align: left;
+          cursor: default;
+        }
+
+        .wallet-card-title {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+
+        .wallet-card-chevron {
+          display: none;
+          color: #64748b;
+          font-size: 14px;
+        }
+
+        .wallet-card-caption {
+          flex-basis: 100%;
+          text-align: right;
+          font-size: 11px;
+          font-weight: 600;
+          color: #64748b;
+        }
+
+        .wallet-card-details {
+          border-top: 1px solid #f1f5f9;
+          padding: 12px 14px;
+          display: grid;
+          gap: 8px;
+          font-size: 13px;
+          color: #334155;
+        }
+
+        .wallet-card-line {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
         }
 
         .recent-tx-row {
@@ -698,12 +793,30 @@ export default function DashboardPage() {
             grid-template-columns: 1fr !important;
           }
 
-          .wallet-summary-row,
           .recent-tx-row {
             grid-template-columns: 1fr !important;
           }
 
-          .wallet-summary-value,
+          .wallet-card-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .wallet-card-head {
+            cursor: pointer;
+          }
+
+          .wallet-card-chevron {
+            display: block;
+          }
+
+          .wallet-card-details {
+            display: none;
+          }
+
+          .wallet-card.is-open .wallet-card-details {
+            display: grid;
+          }
+
           .recent-tx-value {
             justify-self: start !important;
             text-align: left !important;
@@ -756,33 +869,101 @@ export default function DashboardPage() {
 
       <section style={{ ...card, marginBottom: '16px', padding: '14px' }}>
         <div className="dashboard-time-grid">
-          {(['week', 'month', 'year', 'all_time', 'custom'] as TimeFilter[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setTimeFilter(item)}
-              style={{
-                padding: '10px 14px',
-                borderRadius: '999px',
-                border: timeFilter === item ? '1px solid #2563eb' : '1px solid #d1d5db',
-                background: timeFilter === item ? '#2563eb' : '#fff',
-                color: timeFilter === item ? '#fff' : '#111827',
+          {(['week', 'month', 'year', 'all_time', 'custom'] as TimeFilter[]).map((item) => {
+            const active = timeFilter === item
+
+            if (item === 'month') {
+              const arrowStyle: React.CSSProperties = {
+                padding: '10px 12px',
+                border: 'none',
+                background: 'transparent',
+                color: active ? '#fff' : '#111827',
                 fontWeight: 700,
-                fontSize: '14px',
+                fontSize: '16px',
+                lineHeight: 1,
                 cursor: 'pointer',
-              }}
-            >
-              {item === 'week'
-                ? 'This Week'
-                : item === 'month'
-                  ? 'This Month'
+              }
+
+              return (
+                <div
+                  key={item}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: '999px',
+                    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
+                    background: active ? '#2563eb' : '#fff',
+                  }}
+                >
+                  <button
+                    type="button"
+                    aria-label="Previous month"
+                    onClick={() => {
+                      setTimeFilter('month')
+                      setMonthOffset((value) => value - 1)
+                    }}
+                    style={arrowStyle}
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimeFilter('month')}
+                    style={{
+                      padding: '10px 4px',
+                      border: 'none',
+                      background: 'transparent',
+                      color: active ? '#fff' : '#111827',
+                      fontWeight: 700,
+                      fontSize: '14px',
+                      cursor: 'pointer',
+                      minWidth: '118px',
+                      textAlign: 'center',
+                    }}
+                  >
+                    {formatMonthLabel(monthOffset)}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next month"
+                    onClick={() => {
+                      setTimeFilter('month')
+                      setMonthOffset((value) => value + 1)
+                    }}
+                    style={arrowStyle}
+                  >
+                    ›
+                  </button>
+                </div>
+              )
+            }
+
+            return (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setTimeFilter(item)}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '999px',
+                  border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
+                  background: active ? '#2563eb' : '#fff',
+                  color: active ? '#fff' : '#111827',
+                  fontWeight: 700,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+              >
+                {item === 'week'
+                  ? 'This Week'
                   : item === 'year'
                     ? 'This Year'
                     : item === 'all_time'
                       ? 'All Time'
                       : 'Custom'}
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
 
         {timeFilter === 'custom' && (
@@ -895,74 +1076,93 @@ export default function DashboardPage() {
         >
           <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Wallet Summary</h2>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
-            Opening and closing balance for the selected period
+            In, Out, Opening and Closing for {currentLabel}
           </span>
         </div>
 
         {walletSummary.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: '14px' }}>No wallets found.</div>
         ) : (
-          <div style={{ display: 'grid', gap: '10px' }}>
-            {walletSummary.map((wallet) => (
-              <Link
-                key={wallet.id}
-                href={`/wallets/${wallet.id}`}
-                className="wallet-summary-row"
-              >
-                <div>
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: '8px',
-                      alignItems: 'center',
-                      flexWrap: 'wrap',
-                      marginBottom: '6px',
-                    }}
+          <div className="wallet-card-grid">
+            {walletSummary.map((wallet) => {
+              const isOpen = openWalletIds.includes(wallet.id)
+
+              return (
+                <div key={wallet.id} className={`wallet-card${isOpen ? ' is-open' : ''}`}>
+                  <button
+                    type="button"
+                    className="wallet-card-head"
+                    aria-expanded={isOpen}
+                    onClick={() => toggleWalletCard(wallet.id)}
                   >
-                    <div style={{ fontWeight: 700, fontSize: '14px' }}>{wallet.name}</div>
+                    <span className="wallet-card-title">
+                      <span style={{ fontWeight: 700, fontSize: '15px' }}>{wallet.name}</span>
+                      <span
+                        style={{
+                          ...getWalletBadgeStyle(wallet.type),
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '3px 8px',
+                          borderRadius: '999px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {wallet.type}
+                      </span>
+                    </span>
+
                     <span
                       style={{
-                        ...getWalletBadgeStyle(wallet.type),
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '3px 8px',
-                        borderRadius: '999px',
-                        fontSize: '12px',
-                        fontWeight: 700,
+                        marginLeft: 'auto',
+                        fontWeight: 800,
+                        fontSize: '17px',
+                        whiteSpace: 'nowrap',
+                        color: wallet.current >= 0 ? '#166534' : '#b91c1c',
                       }}
                     >
-                      {wallet.type}
+                      {formatBalance(wallet.current)}
                     </span>
-                  </div>
 
-                  <div style={{ fontSize: '12px', color: '#64748b' }}>
-                    <span>Opening: {formatCurrencyCompact(wallet.opening)}</span>
-                    <span style={{ color: '#94a3b8' }}> · </span>
-                    <span style={{ color: '#166534' }}>
-                      In: {formatCurrencyCompact(wallet.moneyIn)}
+                    <span className="wallet-card-chevron" aria-hidden="true">
+                      {isOpen ? '▴' : '▾'}
                     </span>
-                    <span style={{ color: '#94a3b8' }}> · </span>
-                    <span style={{ color: '#b91c1c' }}>
-                      Out: {formatCurrencyCompact(wallet.moneyOut)}
+
+                    <span className="wallet-card-caption">
+                      Current balance, as on {todayLabel}
                     </span>
+                  </button>
+
+                  <div className="wallet-card-details">
+                    <div className="wallet-card-line">
+                      <span style={{ color: '#166534' }}>In: {formatBalance(wallet.moneyIn)}</span>
+                      <span style={{ color: '#b91c1c' }}>Out: {formatBalance(wallet.moneyOut)}</span>
+                    </div>
+                    <div className="wallet-card-line">
+                      <span>Opening Balance</span>
+                      <span style={{ fontWeight: 700 }}>{formatBalance(wallet.opening)}</span>
+                    </div>
+                    <div className="wallet-card-line">
+                      <span>Closing Balance</span>
+                      <span style={{ fontWeight: 700 }}>{formatBalance(wallet.closing)}</span>
+                    </div>
+                    <Link
+                      href={`/wallets/${wallet.id}`}
+                      style={{
+                        display: 'inline-block',
+                        marginTop: '4px',
+                        color: '#2563eb',
+                        textDecoration: 'none',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                      }}
+                    >
+                      View ledger →
+                    </Link>
                   </div>
                 </div>
-
-                <div
-                  className="wallet-summary-value"
-                  style={{
-                    fontWeight: 800,
-                    fontSize: '15px',
-                    color: wallet.closing >= 0 ? '#166534' : '#b91c1c',
-                    whiteSpace: 'nowrap',
-                    textAlign: 'right',
-                  }}
-                >
-                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 700 }}>Closing</div>
-                  {formatBalance(wallet.closing)}
-                </div>
-              </Link>
-            ))}
+              )
+            })}
           </div>
         )}
       </section>
