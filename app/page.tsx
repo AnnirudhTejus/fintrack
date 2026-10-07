@@ -84,6 +84,15 @@ function formatCurrencyCompact(value: number) {
   })}`
 }
 
+// Same as formatBalance but without the RM prefix, for the small secondary figures.
+function formatAmount(value: number) {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}${formatted}`
+}
+
 function formatBalance(value: number) {
   const formatted = Math.abs(value).toLocaleString('en-MY', {
     minimumFractionDigits: 2,
@@ -227,7 +236,6 @@ export default function DashboardPage() {
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [monthOffset, setMonthOffset] = useState(0)
-  const [openWalletIds, setOpenWalletIds] = useState<number[]>([])
 
   const [showForm, setShowForm] = useState(false)
   const [formInitialValues, setFormInitialValues] = useState<TransactionFormInitialValues>({
@@ -546,12 +554,6 @@ export default function DashboardPage() {
     return 'Custom'
   }, [timeFilter, customFrom, customTo, monthOffset])
 
-  function toggleWalletCard(walletId: number) {
-    setOpenWalletIds((ids) =>
-      ids.includes(walletId) ? ids.filter((id) => id !== walletId) : [...ids, walletId]
-    )
-  }
-
   const todayLabel = formatDate(toInputDate(startOfDay(new Date())))
 
   const pageWrap: React.CSSProperties = {
@@ -665,32 +667,26 @@ export default function DashboardPage() {
 
         .wallet-card-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
           gap: 12px;
         }
 
         .wallet-card {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 6px 10px;
+          align-items: center;
+          padding: 12px 14px;
           border: 1px solid #e5e7eb;
           border-radius: 12px;
           background: #fff;
           color: #111827;
-          overflow: hidden;
+          text-decoration: none;
         }
 
-        .wallet-card-head {
-          width: 100%;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 4px 10px;
-          padding: 12px 14px;
-          border: none;
-          background: transparent;
-          color: inherit;
-          font: inherit;
-          text-align: left;
-          cursor: default;
+        .wallet-card:hover {
+          border-color: #cbd5e1;
+          background: #f8fafc;
         }
 
         .wallet-card-title {
@@ -701,33 +697,32 @@ export default function DashboardPage() {
           min-width: 0;
         }
 
-        .wallet-card-chevron {
-          display: none;
-          color: #64748b;
-          font-size: 14px;
-        }
-
-        .wallet-card-caption {
-          flex-basis: 100%;
+        .wallet-card-current {
+          font-weight: 800;
+          font-size: 17px;
+          white-space: nowrap;
           text-align: right;
-          font-size: 11px;
-          font-weight: 600;
+        }
+
+        .wallet-card-figures {
+          grid-column: 1 / -1;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 3px 22px;
+          font-size: 12px;
           color: #64748b;
         }
 
-        .wallet-card-details {
-          border-top: 1px solid #f1f5f9;
-          padding: 12px 14px;
-          display: grid;
-          gap: 8px;
-          font-size: 13px;
-          color: #334155;
-        }
-
-        .wallet-card-line {
+        .wallet-card-figures > span {
           display: flex;
           justify-content: space-between;
-          gap: 10px;
+          gap: 8px;
+        }
+
+        .wallet-card-figures b {
+          font-weight: 600;
+          color: #334155;
+          font-variant-numeric: tabular-nums;
         }
 
         .recent-tx-row {
@@ -799,22 +794,22 @@ export default function DashboardPage() {
 
           .wallet-card-grid {
             grid-template-columns: 1fr;
+            gap: 0;
           }
 
-          .wallet-card-head {
-            cursor: pointer;
+          .wallet-card {
+            border: none;
+            border-top: 1px solid #f1f5f9;
+            border-radius: 0;
+            padding: 12px 4px;
           }
 
-          .wallet-card-chevron {
-            display: block;
+          .wallet-card:first-child {
+            border-top: none;
           }
 
-          .wallet-card-details {
-            display: none;
-          }
-
-          .wallet-card.is-open .wallet-card-details {
-            display: grid;
+          .wallet-card-current {
+            font-size: 15px;
           }
 
           .recent-tx-value {
@@ -1076,7 +1071,7 @@ export default function DashboardPage() {
         >
           <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Wallet Summary</h2>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
-            In, Out, Opening and Closing for {currentLabel}
+            {currentLabel} · current balance as on {todayLabel}
           </span>
         </div>
 
@@ -1084,85 +1079,48 @@ export default function DashboardPage() {
           <div style={{ color: '#64748b', fontSize: '14px' }}>No wallets found.</div>
         ) : (
           <div className="wallet-card-grid">
-            {walletSummary.map((wallet) => {
-              const isOpen = openWalletIds.includes(wallet.id)
-
-              return (
-                <div key={wallet.id} className={`wallet-card${isOpen ? ' is-open' : ''}`}>
-                  <button
-                    type="button"
-                    className="wallet-card-head"
-                    aria-expanded={isOpen}
-                    onClick={() => toggleWalletCard(wallet.id)}
+            {walletSummary.map((wallet) => (
+              <Link key={wallet.id} href={`/wallets/${wallet.id}`} className="wallet-card">
+                <span className="wallet-card-title">
+                  <span style={{ fontWeight: 700, fontSize: '15px' }}>{wallet.name}</span>
+                  <span
+                    style={{
+                      ...getWalletBadgeStyle(wallet.type),
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                    }}
                   >
-                    <span className="wallet-card-title">
-                      <span style={{ fontWeight: 700, fontSize: '15px' }}>{wallet.name}</span>
-                      <span
-                        style={{
-                          ...getWalletBadgeStyle(wallet.type),
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '3px 8px',
-                          borderRadius: '999px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {wallet.type}
-                      </span>
-                    </span>
+                    {wallet.type}
+                  </span>
+                </span>
 
-                    <span
-                      style={{
-                        marginLeft: 'auto',
-                        fontWeight: 800,
-                        fontSize: '17px',
-                        whiteSpace: 'nowrap',
-                        color: wallet.current >= 0 ? '#166534' : '#b91c1c',
-                      }}
-                    >
-                      {formatBalance(wallet.current)}
-                    </span>
+                <span
+                  className="wallet-card-current"
+                  style={{ color: wallet.current >= 0 ? '#166534' : '#b91c1c' }}
+                >
+                  {formatBalance(wallet.current)}
+                </span>
 
-                    <span className="wallet-card-chevron" aria-hidden="true">
-                      {isOpen ? '▴' : '▾'}
-                    </span>
-
-                    <span className="wallet-card-caption">
-                      Current balance, as on {todayLabel}
-                    </span>
-                  </button>
-
-                  <div className="wallet-card-details">
-                    <div className="wallet-card-line">
-                      <span style={{ color: '#166534' }}>In: {formatBalance(wallet.moneyIn)}</span>
-                      <span style={{ color: '#b91c1c' }}>Out: {formatBalance(wallet.moneyOut)}</span>
-                    </div>
-                    <div className="wallet-card-line">
-                      <span>Opening Balance</span>
-                      <span style={{ fontWeight: 700 }}>{formatBalance(wallet.opening)}</span>
-                    </div>
-                    <div className="wallet-card-line">
-                      <span>Closing Balance</span>
-                      <span style={{ fontWeight: 700 }}>{formatBalance(wallet.closing)}</span>
-                    </div>
-                    <Link
-                      href={`/wallets/${wallet.id}`}
-                      style={{
-                        display: 'inline-block',
-                        marginTop: '4px',
-                        color: '#2563eb',
-                        textDecoration: 'none',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                      }}
-                    >
-                      View ledger →
-                    </Link>
-                  </div>
-                </div>
-              )
-            })}
+                <span className="wallet-card-figures">
+                  <span>
+                    Opening <b>{formatAmount(wallet.opening)}</b>
+                  </span>
+                  <span style={{ color: '#166534' }}>
+                    In <b style={{ color: '#166534' }}>{formatAmount(wallet.moneyIn)}</b>
+                  </span>
+                  <span>
+                    Closing <b>{formatAmount(wallet.closing)}</b>
+                  </span>
+                  <span style={{ color: '#b91c1c' }}>
+                    Out <b style={{ color: '#b91c1c' }}>{formatAmount(wallet.moneyOut)}</b>
+                  </span>
+                </span>
+              </Link>
+            ))}
           </div>
         )}
       </section>
