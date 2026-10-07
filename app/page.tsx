@@ -129,7 +129,12 @@ function toInputDate(date: Date) {
   return `${year}-${month}-${day}`
 }
 
-// The month the dashboard is showing. 0 = this month, -1 = last month, 1 = next month.
+// The month selector covers this month and the three before it.
+// Older periods are reached through the Custom filter; future months are not shown.
+const MIN_MONTH_OFFSET = -3
+const MAX_MONTH_OFFSET = 0
+
+// The month the dashboard is showing. 0 = this month, -1 = last month.
 function getSelectedMonth(monthOffset: number) {
   const today = startOfDay(new Date())
   return new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
@@ -868,16 +873,19 @@ export default function DashboardPage() {
             const active = timeFilter === item
 
             if (item === 'month') {
-              const arrowStyle: React.CSSProperties = {
+              const canGoBack = monthOffset > MIN_MONTH_OFFSET
+              const canGoForward = monthOffset < MAX_MONTH_OFFSET
+              const arrowStyle = (enabled: boolean): React.CSSProperties => ({
                 padding: '10px 12px',
                 border: 'none',
                 background: 'transparent',
                 color: active ? '#fff' : '#111827',
+                opacity: enabled ? 1 : 0.35,
                 fontWeight: 700,
                 fontSize: '16px',
                 lineHeight: 1,
-                cursor: 'pointer',
-              }
+                cursor: enabled ? 'pointer' : 'not-allowed',
+              })
 
               return (
                 <div
@@ -893,11 +901,13 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     aria-label="Previous month"
+                    title={canGoBack ? 'Previous month' : 'Use Custom for older months'}
+                    disabled={!canGoBack}
                     onClick={() => {
                       setTimeFilter('month')
-                      setMonthOffset((value) => value - 1)
+                      setMonthOffset((value) => Math.max(MIN_MONTH_OFFSET, value - 1))
                     }}
-                    style={arrowStyle}
+                    style={arrowStyle(canGoBack)}
                   >
                     ‹
                   </button>
@@ -921,11 +931,12 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     aria-label="Next month"
+                    disabled={!canGoForward}
                     onClick={() => {
                       setTimeFilter('month')
-                      setMonthOffset((value) => value + 1)
+                      setMonthOffset((value) => Math.min(MAX_MONTH_OFFSET, value + 1))
                     }}
-                    style={arrowStyle}
+                    style={arrowStyle(canGoForward)}
                   >
                     ›
                   </button>
