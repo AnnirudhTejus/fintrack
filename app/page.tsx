@@ -8,6 +8,7 @@ import TransactionForm, {
   TransactionFormValues,
   TransactionType,
 } from '@/components/TransactionForm'
+import { walletPeriodSummary } from '@/lib/walletBalance'
 
 type PageTransactionType = TransactionType | 'Transfer'
 type TimeFilter = 'week' | 'month' | 'year' | 'all_time' | 'custom'
@@ -32,6 +33,8 @@ type WalletRow = {
   name: string
   type: 'cash' | 'bank' | 'card' | 'ewallet'
   is_archived?: boolean
+  opening_balance?: number | null
+  opening_balance_date?: string | null
 }
 
 type CategoryRow = {
@@ -52,9 +55,10 @@ type WalletSummaryItem = {
   id: number
   name: string
   type: WalletRow['type']
+  opening: number
   moneyIn: number
   moneyOut: number
-  net: number
+  closing: number
 }
 
 type DisplayTransaction = {
@@ -77,6 +81,14 @@ function formatCurrencyCompact(value: number) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   })}`
+}
+
+function formatBalance(value: number) {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatDate(dateString: string) {
@@ -212,7 +224,7 @@ export default function DashboardPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived')
+        .select('id, name, type, is_archived, opening_balance, opening_balance_date')
         .order('name', { ascending: true }),
       supabase
         .from('categories')
@@ -348,53 +360,19 @@ export default function DashboardPage() {
   }, [previousTransactions])
 
   const walletSummary = useMemo<WalletSummaryItem[]>(() => {
-    const map: Record<number, WalletSummaryItem> = {}
+    const from = currentRange.start ? toInputDate(currentRange.start) : null
+    const to = currentRange.end ? toInputDate(currentRange.end) : null
 
-    wallets
+    return wallets
       .filter((wallet) => wallet.is_archived !== true)
-      .forEach((wallet) => {
-        map[wallet.id] = {
-          id: wallet.id,
-          name: wallet.name,
-          type: wallet.type,
-          moneyIn: 0,
-          moneyOut: 0,
-          net: 0,
-        }
-      })
-
-    filteredTransactions.forEach((tx) => {
-      const amount = Number(tx.amount) || 0
-
-      if (tx.type === 'Income') {
-        if (tx.wallet_id && map[tx.wallet_id]) {
-          map[tx.wallet_id].moneyIn += amount
-        }
-      }
-
-      if (tx.type === 'Expense' || tx.type === 'Investment') {
-        if (tx.wallet_id && map[tx.wallet_id]) {
-          map[tx.wallet_id].moneyOut += amount
-        }
-      }
-
-      if (tx.type === 'Transfer') {
-        if (tx.wallet_id && map[tx.wallet_id]) {
-          map[tx.wallet_id].moneyOut += amount
-        }
-        if (tx.transfer_wallet_id && map[tx.transfer_wallet_id]) {
-          map[tx.transfer_wallet_id].moneyIn += amount
-        }
-      }
-    })
-
-    return Object.values(map)
       .map((wallet) => ({
-        ...wallet,
-        net: wallet.moneyIn - wallet.moneyOut,
+        id: wallet.id,
+        name: wallet.name,
+        type: wallet.type,
+        ...walletPeriodSummary(wallet, transactions, from, to),
       }))
-      .sort((a, b) => Math.abs(b.net) - Math.abs(a.net))
-  }, [filteredTransactions, wallets])
+      .sort((a, b) => Math.abs(b.closing) - Math.abs(a.closing))
+  }, [transactions, wallets, currentRange.start, currentRange.end])
 
   const expenseBreakdown = useMemo(() => {
     const expenseRows = filteredTransactions.filter((tx) => tx.type === 'Expense')
@@ -917,7 +895,7 @@ export default function DashboardPage() {
         >
           <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Wallet Summary</h2>
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
-            Based on selected period
+            Opening and closing balance for the selected period
           </span>
         </div>
 
@@ -958,21 +936,14 @@ export default function DashboardPage() {
                   </div>
 
                   <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    <span>Opening: {formatCurrencyCompact(wallet.opening)}</span>
+                    <span style={{ color: '#94a3b8' }}> · </span>
                     <span style={{ color: '#166534' }}>
                       In: {formatCurrencyCompact(wallet.moneyIn)}
                     </span>
                     <span style={{ color: '#94a3b8' }}> · </span>
                     <span style={{ color: '#b91c1c' }}>
                       Out: {formatCurrencyCompact(wallet.moneyOut)}
-                    </span>
-                    <span style={{ color: '#94a3b8' }}> · </span>
-                    <span
-                      style={{
-                        color: wallet.net >= 0 ? '#166534' : '#b91c1c',
-                        fontWeight: 700,
-                      }}
-                    >
-                      Net: {formatCurrencyCompact(wallet.net)}
                     </span>
                   </div>
                 </div>
@@ -982,11 +953,13 @@ export default function DashboardPage() {
                   style={{
                     fontWeight: 800,
                     fontSize: '15px',
-                    color: wallet.net >= 0 ? '#166534' : '#b91c1c',
+                    color: wallet.closing >= 0 ? '#166534' : '#b91c1c',
                     whiteSpace: 'nowrap',
+                    textAlign: 'right',
                   }}
                 >
-                  {formatCurrencyCompact(wallet.net)}
+                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: 700 }}>Balance</div>
+                  {formatBalance(wallet.closing)}
                 </div>
               </Link>
             ))}

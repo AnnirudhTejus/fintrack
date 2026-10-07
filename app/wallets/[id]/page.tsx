@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { walletBalance } from '@/lib/walletBalance'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
 import ConfirmModal from '@/components/ConfirmModal'
 import Toast from '@/components/Toast'
@@ -38,6 +39,8 @@ type WalletRow = {
   type: 'cash' | 'bank' | 'card' | 'ewallet'
   is_archived?: boolean
   created_at?: string
+  opening_balance?: number | null
+  opening_balance_date?: string | null
 }
 
 type VendorRow = {
@@ -342,7 +345,7 @@ export default function WalletLedgerPage() {
     const [walletRes, txRes, walletsRes, vendorsRes, categoriesRes] = await Promise.all([
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived, created_at')
+        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date')
         .eq('id', walletId)
         .maybeSingle(),
       supabase
@@ -521,6 +524,11 @@ export default function WalletLedgerPage() {
       return typeMatch && dateMatch && transferFlowMatch
     })
   }, [displayRows, typeFilter, filterDateFrom, filterDateTo, transferFlowFilter])
+
+  const currentBalance = useMemo(() => {
+    if (!wallet) return 0
+    return walletBalance(wallet, transactions)
+  }, [wallet, transactions])
 
   const summaryTotals = useMemo(() => {
     let moneyIn = 0
@@ -1005,6 +1013,35 @@ export default function WalletLedgerPage() {
           </div>
 
           <div className="wallet-ledger-summary-cards">
+            <div
+              style={{
+                minWidth: '150px',
+                border: '1px solid #bfdbfe',
+                borderRadius: '14px',
+                background: '#eff6ff',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '13px', color: '#1d4ed8', marginBottom: '6px', fontWeight: 700 }}>
+                Balance
+              </div>
+              <div
+                style={{
+                  fontSize: '1.15rem',
+                  fontWeight: 800,
+                  color: currentBalance >= 0 ? '#1d4ed8' : '#b91c1c',
+                }}
+              >
+                {formatCurrency(currentBalance)}
+              </div>
+              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', fontWeight: 600 }}>
+                Opening {formatCurrency(Number(wallet.opening_balance) || 0)}
+                {wallet.opening_balance_date
+                  ? ` as at ${formatDateShort(wallet.opening_balance_date)}`
+                  : ''}
+              </div>
+            </div>
+
             <div
               style={{
                 minWidth: '150px',

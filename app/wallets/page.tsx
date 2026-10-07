@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
 import ConfirmModal from '@/components/ConfirmModal'
+import { walletBalance } from '@/lib/walletBalance'
 
 type WalletType = 'cash' | 'bank' | 'card' | 'ewallet'
 type WalletTab = 'active' | 'archived'
@@ -17,15 +18,45 @@ type WalletRow = {
   type: WalletType
   is_archived?: boolean
   created_at?: string
+  opening_balance?: number | null
+  opening_balance_date?: string | null
 }
 
 type TransactionUsageRow = {
+  type: string
+  amount: number
+  date: string
   wallet_id: number | null
   transfer_wallet_id: number | null
 }
 
 type WalletListItem = WalletRow & {
   usageCount: number
+  balance: number
+}
+
+function formatCurrency(value: number) {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
+}
+
+function todayInputValue() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = `${now.getMonth() + 1}`.padStart(2, '0')
+  const day = `${now.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+// Returns null when the text is not a valid amount. Blank counts as 0.
+function parseOpeningBalance(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return 0
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 function formatDate(dateString?: string) {
@@ -66,6 +97,14 @@ export default function WalletsPage() {
 
   const [walletName, setWalletName] = useState('')
   const [walletType, setWalletType] = useState<WalletType>('cash')
+  const [openingBalance, setOpeningBalance] = useState('')
+  const [openingDate, setOpeningDate] = useState('')
+
+  const [editWallet, setEditWallet] = useState<WalletRow | null>(null)
+  const [editBalance, setEditBalance] = useState('')
+  const [editDate, setEditDate] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState('')
 
   const [workingId, setWorkingId] = useState<number | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -80,9 +119,9 @@ export default function WalletsPage() {
     const [walletRes, txRes] = await Promise.all([
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived, created_at')
+        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date')
         .order('name', { ascending: true }),
-      supabase.from('transaction').select('wallet_id, transfer_wallet_id'),
+      supabase.from('transaction').select('type, amount, date, wallet_id, transfer_wallet_id'),
     ])
 
     if (walletRes.error) {
@@ -123,6 +162,14 @@ export default function WalletsPage() {
     return map
   }, [usageRows])
 
+  const balanceMap = useMemo(() => {
+    const map: Record<number, number> = {}
+    wallets.forEach((wallet) => {
+      map[wallet.id] = walletBalance(wallet, usageRows)
+    })
+    return map
+  }, [wallets, usageRows])
+
   const activeWallets = useMemo(() => {
     return wallets.filter((wallet) => wallet.is_archived !== true)
   }, [wallets])
@@ -148,9 +195,10 @@ export default function WalletsPage() {
       .map((wallet) => ({
         ...wallet,
         usageCount: usageMap[wallet.id] || 0,
+        balance: balanceMap[wallet.id] || 0,
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [tab, activeWallets, archivedWallets, searchQuery, usageMap])
+  }, [tab, activeWallets, archivedWallets, searchQuery, usageMap, balanceMap])
 
   async function handleAddWallet(e: React.FormEvent) {
     e.preventDefault()
@@ -158,6 +206,17 @@ export default function WalletsPage() {
     const trimmedName = walletName.trim()
     if (!trimmedName) {
       setErrorMessage('Wallet name is required.')
+      return
+    }
+
+    const parsedOpening = parseOpeningBalance(openingBalance)
+    if (parsedOpening === null) {
+      setErrorMessage('Opening balance must be a number.')
+      return
+    }
+
+    if (openingDate && openingDate > todayInputValue()) {
+      setErrorMessage('Opening balance date cannot be in the future.')
       return
     }
 
@@ -169,6 +228,8 @@ export default function WalletsPage() {
         name: trimmedName,
         type: walletType,
         is_archived: false,
+        opening_balance: parsedOpening,
+        opening_balance_date: openingDate || null,
       },
     ])
 
@@ -179,7 +240,60 @@ export default function WalletsPage() {
 
     setWalletName('')
     setWalletType('cash')
+    setOpeningBalance('')
+    setOpeningDate('')
     setSuccessMessage('Wallet added successfully.')
+    await fetchData()
+  }
+
+  function openEditOpening(wallet: WalletRow) {
+    setEditWallet(wallet)
+    setEditBalance(
+      wallet.opening_balance === null || wallet.opening_balance === undefined
+        ? ''
+        : String(wallet.opening_balance)
+    )
+    setEditDate(wallet.opening_balance_date || '')
+    setEditError('')
+  }
+
+  async function handleSaveOpening(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editWallet) return
+
+    const parsedOpening = parseOpeningBalance(editBalance)
+    if (parsedOpening === null) {
+      setEditError('Opening balance must be a number.')
+      return
+    }
+
+    if (editDate && editDate > todayInputValue()) {
+      setEditError('Opening balance date cannot be in the future.')
+      return
+    }
+
+    setSavingEdit(true)
+    setEditError('')
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    const { error } = await supabase
+      .from('wallets')
+      .update({
+        opening_balance: parsedOpening,
+        opening_balance_date: editDate || null,
+      })
+      .eq('id', editWallet.id)
+
+    setSavingEdit(false)
+
+    if (error) {
+      setEditError(error.message)
+      return
+    }
+
+    setEditWallet(null)
+    setSuccessMessage('Opening balance saved.')
     await fetchData()
   }
 
@@ -297,9 +411,22 @@ export default function WalletsPage() {
 
         .wallets-add-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.9fr) auto;
+          grid-template-columns: minmax(0, 1.6fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(160px, 0.8fr) auto;
           gap: 12px;
           align-items: end;
+        }
+
+        .wallets-field-label {
+          display: block;
+          font-size: 12px;
+          font-weight: 700;
+          color: #64748b;
+          margin-bottom: 6px;
+        }
+
+        .wallets-balance-col {
+          text-align: right;
+          white-space: nowrap;
         }
 
         .wallets-tabs-row {
@@ -311,7 +438,7 @@ export default function WalletsPage() {
 
         .wallets-row {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
+          grid-template-columns: minmax(0, 1fr) auto auto;
           gap: 12px;
           align-items: center;
           padding: 16px;
@@ -373,7 +500,7 @@ export default function WalletsPage() {
           }
 
           .wallets-row {
-            grid-template-columns: 1fr auto;
+            grid-template-columns: 1fr auto auto;
             align-items: start;
           }
 
@@ -425,24 +552,54 @@ export default function WalletsPage() {
         </h2>
 
         <form onSubmit={handleAddWallet} className="wallets-add-grid">
-          <input
-            type="text"
-            placeholder="Wallet name (e.g. Maybank, Cash)"
-            value={walletName}
-            onChange={(e) => setWalletName(e.target.value)}
-            style={inputStyle}
-          />
+          <label>
+            <span className="wallets-field-label">Wallet name</span>
+            <input
+              type="text"
+              placeholder="e.g. Maybank, Cash"
+              value={walletName}
+              onChange={(e) => setWalletName(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
 
-          <select
-            value={walletType}
-            onChange={(e) => setWalletType(e.target.value as WalletType)}
-            style={inputStyle}
-          >
-            <option value="cash">Cash</option>
-            <option value="bank">Bank</option>
-            <option value="card">Card</option>
-            <option value="ewallet">E-Wallet</option>
-          </select>
+          <label>
+            <span className="wallets-field-label">Type</span>
+            <select
+              value={walletType}
+              onChange={(e) => setWalletType(e.target.value as WalletType)}
+              style={inputStyle}
+            >
+              <option value="cash">Cash</option>
+              <option value="bank">Bank</option>
+              <option value="card">Card</option>
+              <option value="ewallet">E-Wallet</option>
+            </select>
+          </label>
+
+          <label>
+            <span className="wallets-field-label">Opening balance (RM)</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              placeholder="0.00"
+              value={openingBalance}
+              onChange={(e) => setOpeningBalance(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label>
+            <span className="wallets-field-label">As at end of (optional)</span>
+            <input
+              type="date"
+              max={todayInputValue()}
+              value={openingDate}
+              onChange={(e) => setOpeningDate(e.target.value)}
+              style={inputStyle}
+            />
+          </label>
 
           <button type="submit" style={buttonPrimary}>
             Add Wallet
@@ -548,7 +705,26 @@ export default function WalletsPage() {
                       <span>
                         Used in {usageCount} transaction{usageCount === 1 ? '' : 's'}
                       </span>
+                      <span>
+                        Opening {formatCurrency(Number(wallet.opening_balance) || 0)}
+                        {wallet.opening_balance_date
+                          ? ` as at ${formatDate(wallet.opening_balance_date)}`
+                          : ''}
+                      </span>
                       {wallet.created_at && <span>{formatDate(wallet.created_at)}</span>}
+                    </div>
+                  </div>
+
+                  <div className="wallets-balance-col">
+                    <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 700 }}>Balance</div>
+                    <div
+                      style={{
+                        fontSize: '15px',
+                        fontWeight: 800,
+                        color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
+                      }}
+                    >
+                      {formatCurrency(wallet.balance)}
                     </div>
                   </div>
 
@@ -558,6 +734,11 @@ export default function WalletsPage() {
                         {
                           label: 'View Ledger',
                           onClick: () => router.push(`/wallets/${wallet.id}`),
+                        },
+                        {
+                          label: 'Set Opening Balance',
+                          disabled: isWorking,
+                          onClick: () => openEditOpening(wallet),
                         },
                         tab === 'active'
                           ? {
@@ -584,6 +765,110 @@ export default function WalletsPage() {
             })
           )}
         </section>
+      )}
+
+      {editWallet && (
+        <div
+          onClick={() => !savingEdit && setEditWallet(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: 16,
+          }}
+        >
+          <form
+            onSubmit={handleSaveOpening}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 380,
+              background: '#fff',
+              borderRadius: 12,
+              padding: 16,
+              display: 'grid',
+              gap: 12,
+            }}
+          >
+            <div>
+              <h3 style={{ margin: 0 }}>Opening balance</h3>
+              <p style={{ fontSize: 14, color: '#555', margin: '6px 0 0' }}>{editWallet.name}</p>
+            </div>
+
+            <label>
+              <span className="wallets-field-label">Opening balance (RM)</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="0.00"
+                value={editBalance}
+                onChange={(e) => setEditBalance(e.target.value)}
+                style={inputStyle}
+                autoFocus
+              />
+            </label>
+
+            <label>
+              <span className="wallets-field-label">As at end of (optional)</span>
+              <input
+                type="date"
+                max={todayInputValue()}
+                value={editDate}
+                onChange={(e) => setEditDate(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+              {editDate
+                ? 'Only transactions dated after this day are added to the balance.'
+                : 'No date set: every transaction in this wallet is added to the balance.'}
+            </p>
+
+            {editError && (
+              <p style={{ fontSize: 13, color: '#b91c1c', margin: 0, fontWeight: 600 }}>{editError}</p>
+            )}
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => setEditWallet(null)}
+                disabled={savingEdit}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: 8,
+                  border: '1px solid #ddd',
+                  background: '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingEdit}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: 8,
+                  border: '1px solid #0f172a',
+                  background: '#0f172a',
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {savingEdit ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       <ConfirmModal
