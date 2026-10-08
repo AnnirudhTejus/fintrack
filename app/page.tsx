@@ -10,6 +10,11 @@ import TransactionForm, {
   TransactionType,
 } from '@/components/TransactionForm'
 import { walletBalance, walletPeriodSummary } from '@/lib/walletBalance'
+import PeriodFilter, {
+  formatMonthLabel,
+  getSelectedMonth,
+  getWeekStart,
+} from '@/components/PeriodFilter'
 
 type PageTransactionType = TransactionType | 'Transfer'
 type TimeFilter = 'week' | 'month' | 'year' | 'all_time' | 'custom'
@@ -76,14 +81,19 @@ type DisplayTransaction = {
 }
 
 function formatCurrency(value: number) {
-  return `RM ${value.toFixed(2)}`
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatCurrencyCompact(value: number) {
-  return `RM ${value.toLocaleString('en-MY', {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  })}`
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 // Same as formatBalance but without the RM prefix, for the small secondary figures.
@@ -133,24 +143,6 @@ function toInputDate(date: Date) {
   return `${year}-${month}-${day}`
 }
 
-// The month selector covers this month and the three before it.
-// Older periods are reached through the Custom filter; future months are not shown.
-const MIN_MONTH_OFFSET = -3
-const MAX_MONTH_OFFSET = 0
-
-// The month the dashboard is showing. 0 = this month, -1 = last month.
-function getSelectedMonth(monthOffset: number) {
-  const today = startOfDay(new Date())
-  return new Date(today.getFullYear(), today.getMonth() + monthOffset, 1)
-}
-
-function formatMonthLabel(monthOffset: number) {
-  return getSelectedMonth(monthOffset).toLocaleDateString('en-MY', {
-    month: 'long',
-    year: 'numeric',
-  })
-}
-
 function getDateRange(
   filter: TimeFilter,
   customFrom: string,
@@ -160,8 +152,7 @@ function getDateRange(
   const today = startOfDay(new Date())
 
   if (filter === 'week') {
-    const start = addDays(today, -6)
-    return { start, end: today }
+    return { start: getWeekStart(), end: today }
   }
 
   if (filter === 'month') {
@@ -362,6 +353,10 @@ export default function DashboardPage() {
       const start = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth() - 1, 1)
       const end = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth(), 0)
       return { start, end }
+    }
+    // This week so far is compared with the same days of last week.
+    if (timeFilter === 'week' && currentRange.start && currentRange.end) {
+      return { start: addDays(currentRange.start, -7), end: addDays(currentRange.end, -7) }
     }
     return getPreviousRange(currentRange.start, currentRange.end)
   }, [timeFilter, monthOffset, currentRange.start, currentRange.end])
@@ -627,21 +622,17 @@ export default function DashboardPage() {
             ? '#b91c1c'
             : '#166534'
 
+    const changeAmount = changeText.replace(' vs previous period', '')
+
     return (
-      <div
-        style={{
-          border: '1px solid #e5e7eb',
-          borderRadius: '14px',
-          background: '#fff',
-          padding: '16px',
-        }}
-      >
-        <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '8px', fontWeight: 700 }}>
-          {label}
+      <div className="summary-card">
+        <div className="summary-label">{label}</div>
+        <div className="summary-value" style={{ color }}>
+          {formatCurrency(value)}
         </div>
-        <div style={{ fontSize: '1.5rem', fontWeight: 800, color }}>{formatCurrency(value)}</div>
-        <div style={{ marginTop: '8px', fontSize: '13px', color: changeColor, fontWeight: 600 }}>
-          {changeText}
+        <div className="summary-change" style={{ color: changeColor }}>
+          {changeAmount} <span className="summary-change-long">vs previous period</span>
+          <span className="summary-change-short">vs prev</span>
         </div>
       </div>
     )
@@ -685,6 +676,71 @@ export default function DashboardPage() {
           grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
           gap: 12px;
           margin-bottom: 16px;
+        }
+
+        .summary-card {
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #fff;
+          padding: 16px;
+          min-width: 0;
+        }
+
+        .summary-label {
+          font-size: 13px;
+          color: #64748b;
+          margin-bottom: 8px;
+          font-weight: 700;
+        }
+
+        .summary-value {
+          font-size: 1.5rem;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .summary-change {
+          margin-top: 8px;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .summary-change-short {
+          display: none;
+        }
+
+        @media (max-width: 640px) {
+          .dashboard-summary-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 10px;
+          }
+
+          .summary-card {
+            padding: 12px;
+            border-radius: 12px;
+          }
+
+          .summary-label {
+            font-size: 12px;
+            margin-bottom: 4px;
+          }
+
+          .summary-value {
+            font-size: 1.1rem;
+          }
+
+          .summary-change {
+            margin-top: 4px;
+            font-size: 11px;
+          }
+
+          .summary-change-long {
+            display: none;
+          }
+
+          .summary-change-short {
+            display: inline;
+          }
         }
 
         .dashboard-main-grid {
@@ -906,109 +962,12 @@ export default function DashboardPage() {
       </div>
 
       <section style={{ ...card, marginBottom: '16px', padding: '14px' }}>
-        <div className="dashboard-time-grid">
-          {(['week', 'month', 'year', 'all_time', 'custom'] as TimeFilter[]).map((item) => {
-            const active = timeFilter === item
-
-            if (item === 'month') {
-              const canGoBack = monthOffset > MIN_MONTH_OFFSET
-              const canGoForward = monthOffset < MAX_MONTH_OFFSET
-              const arrowStyle = (enabled: boolean): React.CSSProperties => ({
-                padding: '10px 12px',
-                border: 'none',
-                background: 'transparent',
-                color: active ? '#fff' : '#111827',
-                opacity: enabled ? 1 : 0.35,
-                fontWeight: 700,
-                fontSize: '16px',
-                lineHeight: 1,
-                cursor: enabled ? 'pointer' : 'not-allowed',
-              })
-
-              return (
-                <div
-                  key={item}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    borderRadius: '999px',
-                    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-                    background: active ? '#2563eb' : '#fff',
-                  }}
-                >
-                  <button
-                    type="button"
-                    aria-label="Previous month"
-                    title={canGoBack ? 'Previous month' : 'Use Custom for older months'}
-                    disabled={!canGoBack}
-                    onClick={() => {
-                      setTimeFilter('month')
-                      setMonthOffset((value) => Math.max(MIN_MONTH_OFFSET, value - 1))
-                    }}
-                    style={arrowStyle(canGoBack)}
-                  >
-                    ‹
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTimeFilter('month')}
-                    style={{
-                      padding: '10px 4px',
-                      border: 'none',
-                      background: 'transparent',
-                      color: active ? '#fff' : '#111827',
-                      fontWeight: 700,
-                      fontSize: '14px',
-                      cursor: 'pointer',
-                      minWidth: '118px',
-                      textAlign: 'center',
-                    }}
-                  >
-                    {formatMonthLabel(monthOffset)}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Next month"
-                    disabled={!canGoForward}
-                    onClick={() => {
-                      setTimeFilter('month')
-                      setMonthOffset((value) => Math.min(MAX_MONTH_OFFSET, value + 1))
-                    }}
-                    style={arrowStyle(canGoForward)}
-                  >
-                    ›
-                  </button>
-                </div>
-              )
-            }
-
-            return (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setTimeFilter(item)}
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: '999px',
-                  border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-                  background: active ? '#2563eb' : '#fff',
-                  color: active ? '#fff' : '#111827',
-                  fontWeight: 700,
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                }}
-              >
-                {item === 'week'
-                  ? 'This Week'
-                  : item === 'year'
-                    ? 'This Year'
-                    : item === 'all_time'
-                      ? 'All Time'
-                      : 'Custom'}
-              </button>
-            )
-          })}
-        </div>
+        <PeriodFilter
+          period={timeFilter}
+          monthOffset={monthOffset}
+          onPeriodChange={setTimeFilter}
+          onMonthOffsetChange={setMonthOffset}
+        />
 
         {timeFilter === 'custom' && (
           <div className="dashboard-custom-grid">

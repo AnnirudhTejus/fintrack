@@ -93,14 +93,19 @@ type InlineMenuProps = {
 }
 
 function formatCurrency(value: number) {
-  return `RM ${value.toFixed(2)}`
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatCurrencyCompact(value: number) {
-  return `RM ${value.toLocaleString('en-MY', {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  })}`
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatPrettyDate(dateString: string) {

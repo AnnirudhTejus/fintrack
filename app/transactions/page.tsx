@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
-import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
+import { buildDateRange, isDateInRange, toInputDate } from '@/lib/dateFilters'
+import PeriodFilter, { formatMonthLabel, getSelectedMonth, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
@@ -91,14 +92,19 @@ type GroupedTransactions = {
 }
 
 function formatCurrency(value: number) {
-  return `RM ${value.toFixed(2)}`
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatCurrencyCompact(value: number) {
-  return `RM ${value.toLocaleString('en-MY', {
+  const formatted = Math.abs(value).toLocaleString('en-MY', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  })}`
+  })
+  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatPrettyDate(dateString: string) {
@@ -197,14 +203,16 @@ function getCsvDirection(item: DisplayTransaction) {
   return 'Out'
 }
 
-const presetOptions: { value: DatePreset; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'this_week', label: 'This Week' },
-  { value: 'this_month', label: 'This Month' },
-  { value: 'last_30_days', label: 'Last 30 Days' },
-  { value: 'this_year', label: 'This Year' },
-  { value: 'all_time', label: 'All Time' },
-]
+// Date range for each period button. Custom keeps whatever dates are typed in.
+function rangeForPeriod(period: Period, monthOffset: number, from: string, to: string) {
+  if (period === 'week') return buildDateRange('this_week')
+  if (period === 'year') return buildDateRange('this_year')
+  if (period === 'all_time') return { from: '', to: '' }
+  if (period === 'custom') return { from, to }
+  const start = getSelectedMonth(monthOffset)
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
+  return { from: toInputDate(start), to: toInputDate(end) }
+}
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
@@ -221,7 +229,8 @@ export default function TransactionsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterWalletId, setFilterWalletId] = useState<string>('All')
 
-  const [datePreset, setDatePreset] = useState<DatePreset>('all_time')
+  const [period, setPeriod] = useState<Period>('all_time')
+  const [monthOffset, setMonthOffset] = useState(0)
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
 
@@ -429,7 +438,7 @@ export default function TransactionsPage() {
     searchQuery,
     filterDateFrom,
     filterDateTo,
-    datePreset,
+    period,
     pageSize,
   ])
 
@@ -583,13 +592,11 @@ export default function TransactionsPage() {
       if (category) parts.push(category.name)
     }
 
-    if (datePreset !== 'all_time') {
-      if (datePreset === 'today') parts.push('Today')
-      else if (datePreset === 'this_week') parts.push('This Week')
-      else if (datePreset === 'this_month') parts.push('This Month')
-      else if (datePreset === 'last_30_days') parts.push('Last 30 Days')
-      else if (datePreset === 'this_year') parts.push('This Year')
-      else if (datePreset === 'custom') {
+    if (period !== 'all_time') {
+      if (period === 'week') parts.push('This Week')
+      else if (period === 'month') parts.push(formatMonthLabel(monthOffset))
+      else if (period === 'year') parts.push('This Year')
+      else if (period === 'custom') {
         if (filterDateFrom && filterDateTo) {
           const sameMonth =
             formatMonthYearLabel(filterDateFrom) === formatMonthYearLabel(filterDateTo)
@@ -614,7 +621,8 @@ export default function TransactionsPage() {
     wallets,
     filterCategoryId,
     availableFilterCategories,
-    datePreset,
+    period,
+    monthOffset,
     filterDateFrom,
     filterDateTo,
     searchQuery,
@@ -633,20 +641,29 @@ export default function TransactionsPage() {
     return `${base} · ${summaryContextParts.join(' · ')}`
   }, [filteredTransactions.length, filteredGrandTotal, filterType, summaryTitle, summaryContextParts])
 
-  function handlePresetChange(preset: DatePreset) {
-    setDatePreset(preset)
-    const range = buildDateRange(preset, filterDateFrom, filterDateTo)
+  function handlePeriodChange(next: Period) {
+    setPeriod(next)
+    const range = rangeForPeriod(next, monthOffset, filterDateFrom, filterDateTo)
+    setFilterDateFrom(range.from)
+    setFilterDateTo(range.to)
+    // Custom dates are typed in the filter panel, which is folded away on phones.
+    if (next === 'custom') setShowMobileFilters(true)
+  }
+
+  function handleMonthOffsetChange(next: number) {
+    setMonthOffset(next)
+    const range = rangeForPeriod('month', next, filterDateFrom, filterDateTo)
     setFilterDateFrom(range.from)
     setFilterDateTo(range.to)
   }
 
   function handleFromDateChange(value: string) {
-    setDatePreset('custom')
+    setPeriod('custom')
     setFilterDateFrom(value)
   }
 
   function handleToDateChange(value: string) {
-    setDatePreset('custom')
+    setPeriod('custom')
     setFilterDateTo(value)
   }
 
@@ -655,7 +672,8 @@ export default function TransactionsPage() {
     setFilterCategoryId('All')
     setSearchQuery('')
     setFilterWalletId('All')
-    setDatePreset('all_time')
+    setPeriod('all_time')
+    setMonthOffset(0)
     setFilterDateFrom('')
     setFilterDateTo('')
   }
@@ -846,22 +864,6 @@ export default function TransactionsPage() {
     fontWeight: 700,
     fontSize: '14px',
   }
-
-  const presetButton = (active: boolean): CSSProperties => ({
-    height: '42px',
-    padding: '0 18px',
-    borderRadius: '999px',
-    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-    background: active ? '#2563eb' : '#fff',
-    color: active ? '#fff' : '#111827',
-    cursor: 'pointer',
-    fontWeight: 700,
-    fontSize: '13px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-  })
 
   const paginationButton = (active: boolean): CSSProperties => ({
     minWidth: '40px',
@@ -1072,9 +1074,9 @@ export default function TransactionsPage() {
 
         @media (max-width: 640px) {
           .tx-mobile-actions {
-            display: flex !important;
+            display: grid !important;
+            grid-template-columns: 1fr 1fr;
             gap: 8px;
-            flex-wrap: wrap;
             margin-bottom: 10px;
           }
 
@@ -1170,7 +1172,12 @@ export default function TransactionsPage() {
           className="tx-page-actions"
           style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
         >
-          <button type="button" onClick={handleExportCsv} style={buttonSecondary}>
+          <button
+            type="button"
+            className="hide-on-phone"
+            onClick={handleExportCsv}
+            style={buttonSecondary}
+          >
             Export CSV
           </button>
           <button
@@ -1192,16 +1199,12 @@ export default function TransactionsPage() {
         }}
       >
         <div className="tx-quick-date-row">
-          {presetOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => handlePresetChange(option.value)}
-              style={presetButton(datePreset === option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+          <PeriodFilter
+            period={period}
+            monthOffset={monthOffset}
+            onPeriodChange={handlePeriodChange}
+            onMonthOffsetChange={handleMonthOffsetChange}
+          />
         </div>
 
         <div className="tx-mobile-actions">
@@ -1211,6 +1214,9 @@ export default function TransactionsPage() {
             style={buttonSecondary}
           >
             {showMobileFilters ? 'Hide Filters' : 'Filters'}
+          </button>
+          <button type="button" onClick={handleExportCsv} style={buttonSecondary}>
+            Export CSV
           </button>
         </div>
 
