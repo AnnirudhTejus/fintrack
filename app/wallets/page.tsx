@@ -439,9 +439,9 @@ export default function WalletsPage() {
         .wallets-row {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto auto;
-          gap: 12px;
+          gap: 4px 12px;
           align-items: center;
-          padding: 16px;
+          padding: 12px 16px;
           border-top: 1px solid #f1f5f9;
         }
 
@@ -449,24 +449,18 @@ export default function WalletsPage() {
           border-top: none;
         }
 
-        .wallets-row-main {
+        .wallets-row-top {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
           min-width: 0;
         }
 
-        .wallets-row-top {
-          display: flex;
-          gap: 10px;
-          align-items: center;
-          flex-wrap: wrap;
-          margin-bottom: 6px;
-        }
-
         .wallets-row-meta {
-          display: flex;
-          gap: 14px;
-          flex-wrap: wrap;
-          font-size: 13px;
-          color: #475569;
+          grid-column: 1 / -1;
+          font-size: 12px;
+          color: #64748b;
         }
 
         .wallets-menu-col .ram-trigger {
@@ -500,16 +494,11 @@ export default function WalletsPage() {
           }
 
           .wallets-row {
-            grid-template-columns: 1fr auto auto;
-            align-items: start;
+            padding: 12px 14px;
           }
 
           .wallets-menu-col .ram-trigger {
             opacity: 1 !important;
-          }
-
-          .wallets-row-meta {
-            gap: 10px;
           }
         }
       `}</style>
@@ -658,74 +647,59 @@ export default function WalletsPage() {
 
               return (
                 <div key={wallet.id} className="wallets-row">
-                  <div className="wallets-row-main">
-                    <div className="wallets-row-top">
-                      <div
-                        style={{
-                          fontSize: '15px',
-                          fontWeight: 700,
-                          color: '#111827',
-                          wordBreak: 'break-word',
-                        }}
-                      >
-                        {wallet.name}
-                      </div>
-
-                      <span
-                        style={{
-                          ...getWalletTypeBadgeStyle(wallet.type),
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '4px 10px',
-                          borderRadius: '999px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {getWalletTypeLabel(wallet.type)}
-                      </span>
-
-                      <span
-                        style={{
-                          background: wallet.is_archived ? '#e5e7eb' : '#d9f99d',
-                          color: wallet.is_archived ? '#4b5563' : '#4d7c0f',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '4px 10px',
-                          borderRadius: '999px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        {wallet.is_archived ? 'Archived' : 'Active'}
-                      </span>
-                    </div>
-
-                    <div className="wallets-row-meta">
-                      <span>
-                        Used in {usageCount} transaction{usageCount === 1 ? '' : 's'}
-                      </span>
-                      <span>
-                        Opening {formatCurrency(Number(wallet.opening_balance) || 0)}
-                        {wallet.opening_balance_date
-                          ? ` as at ${formatDate(wallet.opening_balance_date)}`
-                          : ''}
-                      </span>
-                      {wallet.created_at && <span>{formatDate(wallet.created_at)}</span>}
-                    </div>
-                  </div>
-
-                  <div className="wallets-balance-col">
-                    <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 700 }}>Balance</div>
+                  <div className="wallets-row-top">
                     <div
                       style={{
                         fontSize: '15px',
-                        fontWeight: 800,
-                        color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
+                        fontWeight: 700,
+                        color: '#111827',
+                        wordBreak: 'break-word',
                       }}
                     >
-                      {formatCurrency(wallet.balance)}
+                      {wallet.name}
                     </div>
+
+                    <span
+                      style={{
+                        ...getWalletTypeBadgeStyle(wallet.type),
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '2px 8px',
+                        borderRadius: '999px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {getWalletTypeLabel(wallet.type)}
+                    </span>
+
+                    {wallet.is_archived && (
+                      <span
+                        style={{
+                          background: '#e5e7eb',
+                          color: '#4b5563',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                        }}
+                      >
+                        Archived
+                      </span>
+                    )}
+                  </div>
+
+                  <div
+                    className="wallets-balance-col"
+                    style={{
+                      fontSize: '15px',
+                      fontWeight: 800,
+                      color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
+                    }}
+                  >
+                    {formatCurrency(wallet.balance)}
                   </div>
 
                   <div className="wallets-menu-col" style={{ justifySelf: 'end' }}>
@@ -759,6 +733,14 @@ export default function WalletsPage() {
                         },
                       ]}
                     />
+                  </div>
+
+                  <div className="wallets-row-meta">
+                    {usageCount} transaction{usageCount === 1 ? '' : 's'} · Opening{' '}
+                    {formatCurrency(Number(wallet.opening_balance) || 0)}
+                    {wallet.opening_balance_date
+                      ? ` as at ${formatDate(wallet.opening_balance_date)}`
+                      : ''}
                   </div>
                 </div>
               )

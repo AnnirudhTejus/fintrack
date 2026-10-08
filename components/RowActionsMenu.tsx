@@ -50,7 +50,7 @@ export default function RowActionsMenu({ items = [] }: RowActionsMenuProps) {
       if (!trigger) return
 
       const rect = trigger.getBoundingClientRect()
-      const menuWidth = menu?.offsetWidth || 180
+      const menuWidth = menu?.offsetWidth || 200
       const menuHeight = menu?.offsetHeight || 0
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
@@ -132,14 +132,14 @@ export default function RowActionsMenu({ items = [] }: RowActionsMenuProps) {
         aria-label="Open row actions"
         aria-expanded={open}
         style={{
-          width: '40px',
-          height: '40px',
-          borderRadius: '12px',
+          width: '34px',
+          height: '34px',
+          borderRadius: '10px',
           border: '1px solid #d1d5db',
           background: '#fff',
           color: '#475569',
           cursor: enabledItems.length === 0 ? 'not-allowed' : 'pointer',
-          fontSize: '20px',
+          fontSize: '18px',
           fontWeight: 700,
           lineHeight: 1,
           display: 'inline-flex',
@@ -160,7 +160,9 @@ export default function RowActionsMenu({ items = [] }: RowActionsMenuProps) {
                 position: 'fixed',
                 top: `${menuPosition.top}px`,
                 left: `${menuPosition.left}px`,
-                minWidth: '180px',
+                width: '200px',
+                maxWidth: 'calc(100vw - 16px)',
+                boxSizing: 'border-box',
                 background: '#fff',
                 border: '1px solid #d1d5db',
                 borderRadius: '12px',
@@ -177,7 +179,8 @@ export default function RowActionsMenu({ items = [] }: RowActionsMenuProps) {
                   disabled={item.disabled || typeof item.onClick !== 'function'}
                   style={{
                     width: '100%',
-                    padding: '12px 14px',
+                    display: 'block',
+                    padding: '10px 12px',
                     border: 'none',
                     borderTop: index === 0 ? 'none' : '1px solid #f1f5f9',
                     background: '#fff',
