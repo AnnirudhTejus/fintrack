@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
 
 export type TransactionType = 'Expense' | 'Income' | 'Investment'
@@ -101,6 +101,9 @@ export default function TransactionForm({
   const [selectedVendorId, setSelectedVendorId] = useState<number | null>(
     initialValues?.vendor_id ?? null
   )
+  // Suggestions show only while the user is typing in the vendor box.
+  const [showVendorSuggestions, setShowVendorSuggestions] = useState(false)
+  const vendorFieldRef = useRef<HTMLDivElement | null>(null)
   const [walletId, setWalletId] = useState<string>(
     initialValues?.wallet_id ? String(initialValues.wallet_id) : ''
   )
@@ -174,6 +177,7 @@ export default function TransactionForm({
     setCategoryId(initialValues?.category_id || '')
     setVendorInput(initialValues?.vendor || '')
     setSelectedVendorId(initialValues?.vendor_id ?? null)
+    setShowVendorSuggestions(false)
     setWalletId(initialValues?.wallet_id ? String(initialValues.wallet_id) : '')
     setTransferWalletId(initialValues?.transfer_wallet_id ? String(initialValues.transfer_wallet_id) : '')
     setAmount(initialValues?.amount || '')
@@ -194,6 +198,25 @@ export default function TransactionForm({
       return typeIdToLabel(category.type_id) === type
     })
   }, [categories, type])
+
+  // Close the vendor suggestions on a tap or click anywhere outside the vendor field.
+  useEffect(() => {
+    if (!showVendorSuggestions) return
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null
+      if (vendorFieldRef.current?.contains(target)) return
+      setShowVendorSuggestions(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('touchstart', handlePointerDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('touchstart', handlePointerDown)
+    }
+  }, [showVendorSuggestions])
 
   const vendorSuggestions = useMemo(() => {
     const query = vendorInput.trim().toLowerCase()
@@ -430,7 +453,15 @@ export default function TransactionForm({
                 </select>
               </div>
 
-              <div>
+              <div
+                ref={vendorFieldRef}
+                onBlur={(e) => {
+                  // Focus moved to another field (for example with Tab or the phone's Next key).
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                    setShowVendorSuggestions(false)
+                  }
+                }}
+              >
                 <label style={labelStyle}>Vendor</label>
                 <input
                   type="text"
@@ -438,12 +469,17 @@ export default function TransactionForm({
                   onChange={(e) => {
                     setVendorInput(e.target.value)
                     setSelectedVendorId(null)
+                    setShowVendorSuggestions(true)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setShowVendorSuggestions(false)
                   }}
                   placeholder="Vendor name"
+                  autoComplete="off"
                   style={inputStyle}
                 />
 
-                {vendorSuggestions.length > 0 && (
+                {showVendorSuggestions && vendorSuggestions.length > 0 && (
                   <div className="transaction-form-vendor-suggestions">
                     {vendorSuggestions.map((vendor) => (
                       <button
@@ -453,6 +489,7 @@ export default function TransactionForm({
                         onClick={() => {
                           setVendorInput(vendor.name)
                           setSelectedVendorId(vendor.id)
+                          setShowVendorSuggestions(false)
                         }}
                       >
                         {vendor.name}
