@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
@@ -297,6 +298,15 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     fetchData()
+  }, [])
+
+  // Reload when a transaction is added from the bottom bar's + button.
+  useEffect(() => {
+    const reload = () => {
+      fetchData()
+    }
+    window.addEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
   }, [])
 
   useEffect(() => {
@@ -1124,7 +1134,7 @@ export default function TransactionsPage() {
         }
       `}</style>
 
-      <div style={{ marginBottom: '16px' }}>
+      <div className="hide-on-phone" style={{ marginBottom: '16px' }}>
         <Link
           href="/"
           style={{
@@ -1163,7 +1173,12 @@ export default function TransactionsPage() {
           <button type="button" onClick={handleExportCsv} style={buttonSecondary}>
             Export CSV
           </button>
-          <button type="button" onClick={handleAddNew} style={buttonPrimary}>
+          <button
+            type="button"
+            className="hide-on-phone"
+            onClick={handleAddNew}
+            style={buttonPrimary}
+          >
             + Add Transaction
           </button>
         </div>

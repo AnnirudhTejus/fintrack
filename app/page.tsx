@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import TransactionForm, {
   TransactionFormInitialValues,
   TransactionFormValues,
@@ -297,6 +298,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchData()
+  }, [])
+
+  // Reload when a transaction is added from the bottom bar's + button.
+  useEffect(() => {
+    const reload = () => {
+      fetchData()
+    }
+    window.addEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
   }, [])
 
   useEffect(() => {
@@ -879,7 +889,7 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="dashboard-nav">
+        <div className="dashboard-nav hide-on-phone">
           <Link href="/transactions" style={navButton}>
             Transactions
           </Link>
@@ -1495,6 +1505,7 @@ export default function DashboardPage() {
 
       <button
         type="button"
+        className="hide-on-phone"
         onClick={() => setShowForm(true)}
         style={{
           position: 'fixed',

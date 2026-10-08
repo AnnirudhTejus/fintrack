@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
 import ConfirmModal from '@/components/ConfirmModal'
@@ -145,6 +146,15 @@ export default function WalletsPage() {
 
   useEffect(() => {
     fetchData()
+  }, [])
+
+  // Reload when a transaction is added from the bottom bar's + button.
+  useEffect(() => {
+    const reload = () => {
+      fetchData()
+    }
+    window.addEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
   }, [])
 
   const usageMap = useMemo(() => {
@@ -503,7 +513,7 @@ export default function WalletsPage() {
         }
       `}</style>
 
-      <div style={{ marginBottom: '16px' }}>
+      <div className="hide-on-phone" style={{ marginBottom: '16px' }}>
         <Link
           href="/"
           style={{

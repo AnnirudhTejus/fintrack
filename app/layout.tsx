@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import MobileNav from '@/components/MobileNav'
 
 export const metadata: Metadata = {
   title: 'FinTrack',
@@ -31,6 +32,7 @@ export default function RootLayout({
         >
           {children}
         </div>
+        <MobileNav />
       </body>
     </html>
   )

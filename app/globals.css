@@ -40,3 +40,14 @@ table {
   width: 100%;
   border-collapse: collapse;
 }
+/* Phone layout: the bottom navigation bar (components/MobileNav.tsx) replaces
+   the top page buttons, the floating + and the Back to Dashboard links. */
+@media (max-width: 640px) {
+  html .hide-on-phone {
+    display: none !important;
+  }
+
+  body {
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+}

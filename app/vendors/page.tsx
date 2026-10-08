@@ -415,7 +415,7 @@ export default function VendorsPage() {
         }
       `}</style>
 
-      <div style={{ marginBottom: '16px' }}>
+      <div className="hide-on-phone" style={{ marginBottom: '16px' }}>
         <Link
           href="/"
           style={{

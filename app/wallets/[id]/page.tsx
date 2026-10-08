@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { walletPeriodSummary } from '@/lib/walletBalance'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
 import ConfirmModal from '@/components/ConfirmModal'
@@ -410,6 +411,15 @@ export default function WalletLedgerPage() {
   useEffect(() => {
     fetchData()
   }, [walletId])
+
+  // Reload when a transaction is added from the bottom bar's + button.
+  useEffect(() => {
+    const reload = () => {
+      fetchData()
+    }
+    window.addEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
+    return () => window.removeEventListener(TRANSACTIONS_CHANGED_EVENT, reload)
+  }, [])
 
   useEffect(() => {
     const range = buildDateRange('this_month')
