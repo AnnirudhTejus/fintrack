@@ -348,12 +348,35 @@ export default function DashboardPage() {
   )
 
   const previousRange = useMemo(() => {
-    // A whole past or future month is compared with the whole month before it.
+    // All Time has nothing before it to compare with.
+    if (timeFilter === 'all_time') return { start: null, end: null }
+
+    // A whole past month is compared with the whole month before it.
     if (timeFilter === 'month' && monthOffset !== 0 && currentRange.start) {
       const start = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth() - 1, 1)
       const end = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth(), 0)
       return { start, end }
     }
+
+    // This month so far is compared with the same days of last month (1 to 8 Oct vs 1 to 8 Sep).
+    if (timeFilter === 'month' && currentRange.start && currentRange.end) {
+      const start = new Date(currentRange.start.getFullYear(), currentRange.start.getMonth() - 1, 1)
+      const lastDay = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()
+      const end = new Date(start.getFullYear(), start.getMonth(), Math.min(currentRange.end.getDate(), lastDay))
+      return { start, end }
+    }
+
+    // This year so far is compared with the same dates last year.
+    if (timeFilter === 'year' && currentRange.start && currentRange.end) {
+      const year = currentRange.end.getFullYear() - 1
+      const month = currentRange.end.getMonth()
+      const lastDay = new Date(year, month + 1, 0).getDate()
+      return {
+        start: new Date(year, 0, 1),
+        end: new Date(year, month, Math.min(currentRange.end.getDate(), lastDay)),
+      }
+    }
+
     // This week so far is compared with the same days of last week.
     if (timeFilter === 'week' && currentRange.start && currentRange.end) {
       return { start: addDays(currentRange.start, -7), end: addDays(currentRange.end, -7) }
@@ -603,6 +626,9 @@ export default function DashboardPage() {
     display: 'inline-block',
   }
 
+  // No comparison line when there is no earlier period (All Time, or Custom without both dates).
+  const showComparison = previousRange.start !== null && previousRange.end !== null
+
   const summaryCard = (
     label: string,
     value: number,
@@ -630,10 +656,12 @@ export default function DashboardPage() {
         <div className="summary-value" style={{ color }}>
           {formatCurrency(value)}
         </div>
-        <div className="summary-change" style={{ color: changeColor }}>
-          {changeAmount} <span className="summary-change-long">vs previous period</span>
-          <span className="summary-change-short">vs prev</span>
-        </div>
+        {showComparison && (
+          <div className="summary-change" style={{ color: changeColor }}>
+            {changeAmount} <span className="summary-change-long">vs previous period</span>
+            <span className="summary-change-short">vs prev</span>
+          </div>
+        )}
       </div>
     )
   }
