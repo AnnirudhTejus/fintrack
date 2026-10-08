@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FinTrack
 
-## Getting Started
+A personal finance tracker for recording and reviewing transactions, wallets, categories, vendors and transfers, with a dashboard summary and CSV export.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Next.js (App Router, TypeScript), React client components
+- Supabase (PostgreSQL), queried directly from the app
+- Vercel for hosting, deployed automatically from GitHub
+
+## Environments
+
+| Environment | Branch | Supabase project | Data |
+|---|---|---|---|
+| Production | `main` | Fintrack-Production | Real data |
+| Test | `test` | AnnirudhTejus's Project | Dummy data (rows noted `[dummy]`) |
+
+Both Supabase projects are on the free plan and pause after about a week without use. The app then shows "TypeError: Failed to fetch". Restore the project from the Supabase dashboard; no data is lost.
+
+## Release flow
+
+1. Commit and push to `test`. Vercel builds a preview site against the test database.
+2. Check the change on the preview site, on a phone as well as a laptop.
+3. If the change needs a database change, apply it to the test database first, then to production before the code is released.
+4. Merge `test` into `main` and push. Vercel deploys production.
+
+## Environment variables
+
+Set in `.env.local` for local development and in the Vercel project settings for deployments:
+
+```
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_ANON_KEY
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Then open http://localhost:3000.
 
-## Learn More
+## Key rules
 
-To learn more about Next.js, take a look at the following resources:
+**Wallet balances** are calculated in one place, `lib/walletBalance.ts`, and used by the dashboard, the wallets page and the wallet ledger.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Balance = opening balance + income - expense - investment + transfers in - transfers out.
+- A wallet's opening balance is "as at end of" an optional date. Transactions after that date are added to it. Within the month of that date the balance is worked back to the 1st. Earlier months have no known balance and show a dash.
+- A wallet with no opening date starts from its opening balance at its first transaction. Months before that show a dash.
+- Money in and money out always show what actually moved in a period.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Transaction dates** cannot be in the future. The app checks against the device's local date. The database rule (`transaction_date_not_in_future`) allows up to its own date plus one day, because the database runs on UTC and Malaysia is 8 hours ahead.
 
-## Deploy on Vercel
+## Database changes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Date | Change |
+|---|---|
+| Oct 2026 | `transaction_date_not_in_future` relaxed to `date <= CURRENT_DATE + 1` |
+| Oct 2026 | `wallets.opening_balance` (numeric, default 0) and `wallets.opening_balance_date` (date) added |
