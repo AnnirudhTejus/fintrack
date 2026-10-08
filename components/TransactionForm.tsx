@@ -82,6 +82,52 @@ function todayInputValue() {
   return `${year}-${month}-${day}`
 }
 
+// The categories, vendors and wallets lists are kept here once downloaded, so
+// opening the form again does not wait on the database.
+type Lookups = { categories: CategoryRow[]; vendors: VendorRow[]; wallets: WalletRow[] }
+
+let lookupCache: Lookups | null = null
+let lookupRequest: Promise<Lookups> | null = null
+
+// Downloads the lists, or reuses a download already in progress.
+// refresh = false returns the kept lists without going to the database.
+export function loadTransactionLookups(refresh = false): Promise<Lookups> {
+  if (!refresh && lookupCache) return Promise.resolve(lookupCache)
+  if (lookupRequest) return lookupRequest
+
+  lookupRequest = Promise.all([
+    supabase
+      .from('categories')
+      .select('id, name, type_id, is_archived, is_active')
+      .order('type_id', { ascending: true })
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true }),
+    supabase
+      .from('vendors')
+      .select('id, name, normalized_name, is_archived')
+      .order('name', { ascending: true }),
+    supabase
+      .from('wallets')
+      .select('id, name, type, is_archived')
+      .order('name', { ascending: true }),
+  ])
+    .then(([categoryRes, vendorRes, walletRes]) => {
+      // If one list fails, keep the last good copy of it.
+      lookupCache = {
+        categories: categoryRes.error ? lookupCache?.categories || [] : (categoryRes.data as CategoryRow[]) || [],
+        vendors: vendorRes.error ? lookupCache?.vendors || [] : (vendorRes.data as VendorRow[]) || [],
+        wallets: walletRes.error ? lookupCache?.wallets || [] : (walletRes.data as WalletRow[]) || [],
+      }
+      return lookupCache
+    })
+    .catch(() => lookupCache || { categories: [], vendors: [], wallets: [] })
+    .finally(() => {
+      lookupRequest = null
+    })
+
+  return lookupRequest
+}
+
 export default function TransactionForm({
   mode = 'add',
   initialValues,
@@ -90,10 +136,11 @@ export default function TransactionForm({
   onCancel,
   onSubmit,
 }: TransactionFormProps) {
-  const [categories, setCategories] = useState<CategoryRow[]>([])
-  const [vendors, setVendors] = useState<VendorRow[]>([])
-  const [wallets, setWallets] = useState<WalletRow[]>([])
-  const [loading, setLoading] = useState(true)
+  // Start from the kept lists so the form is usable straight away.
+  const [categories, setCategories] = useState<CategoryRow[]>(lookupCache?.categories || [])
+  const [vendors, setVendors] = useState<VendorRow[]>(lookupCache?.vendors || [])
+  const [wallets, setWallets] = useState<WalletRow[]>(lookupCache?.wallets || [])
+  const [loading, setLoading] = useState(lookupCache === null)
 
   const [type, setType] = useState<FormTransactionType>(initialValues?.type || 'Expense')
   const [categoryId, setCategoryId] = useState(initialValues?.category_id || '')
@@ -119,35 +166,20 @@ export default function TransactionForm({
 
   const today = todayInputValue()
 
+  // Refresh the lists in the background each time the form opens, so a new
+  // category, vendor or wallet added elsewhere still shows up.
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true)
-
-      const [categoryRes, vendorRes, walletRes] = await Promise.all([
-        supabase
-          .from('categories')
-          .select('id, name, type_id, is_archived, is_active')
-          .order('type_id', { ascending: true })
-          .order('sort_order', { ascending: true })
-          .order('name', { ascending: true }),
-        supabase
-          .from('vendors')
-          .select('id, name, normalized_name, is_archived')
-          .order('name', { ascending: true }),
-        supabase
-          .from('wallets')
-          .select('id, name, type, is_archived')
-          .order('name', { ascending: true }),
-      ])
-
-      if (!categoryRes.error) setCategories((categoryRes.data as CategoryRow[]) || [])
-      if (!vendorRes.error) setVendors((vendorRes.data as VendorRow[]) || [])
-      if (!walletRes.error) setWallets((walletRes.data as WalletRow[]) || [])
-
+    let active = true
+    loadTransactionLookups(true).then((lookups) => {
+      if (!active) return
+      setCategories(lookups.categories)
+      setVendors(lookups.vendors)
+      setWallets(lookups.wallets)
       setLoading(false)
+    })
+    return () => {
+      active = false
     }
-
-    fetchData()
   }, [])
 
   useEffect(() => {

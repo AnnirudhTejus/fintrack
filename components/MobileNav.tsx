@@ -10,7 +10,10 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import TransactionForm, { type TransactionFormValues } from '@/components/TransactionForm'
+import TransactionForm, {
+  loadTransactionLookups,
+  type TransactionFormValues,
+} from '@/components/TransactionForm'
 import Toast from '@/components/Toast'
 
 export const TRANSACTIONS_CHANGED_EVENT = 'fintrack:transactions-changed'
@@ -68,6 +71,11 @@ export default function MobileNav() {
   const [showForm, setShowForm] = useState(false)
   const [formKey, setFormKey] = useState(0)
   const [successMessage, setSuccessMessage] = useState('')
+
+  // On phones, download the form's lists early so the first tap on + is instant.
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 640px)').matches) loadTransactionLookups()
+  }, [])
 
   // Stop the page behind the form from scrolling while it is open.
   useEffect(() => {
