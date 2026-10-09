@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { formatMoney, walletCurrency } from '@/lib/currency'
@@ -9,6 +9,7 @@ import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { walletPeriodSummary } from '@/lib/walletBalance'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
 import ConfirmModal from '@/components/ConfirmModal'
+import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
 import TransactionForm, {
   TransactionFormInitialValues,
@@ -85,13 +86,6 @@ type LedgerGroup = {
   expenseTotal: number
   incomeTotal: number
   transferTotal: number
-}
-
-type InlineMenuProps = {
-  row: LedgerDisplayRow
-  isWorking: boolean
-  onEdit: (row: LedgerDisplayRow) => void
-  onDelete: (id: string) => void
 }
 
 function formatPrettyDate(dateString: string) {
@@ -171,129 +165,6 @@ const presetOptions: { value: DatePreset; label: string }[] = [
   { value: 'all_time', label: 'All Time' },
   { value: 'custom', label: 'Custom' },
 ]
-
-function InlineActionsMenu({ row, isWorking, onEdit, onDelete }: InlineMenuProps) {
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    if (!open) return
-
-    const handleOutside = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node | null
-      if (!wrapRef.current?.contains(target)) {
-        setOpen(false)
-      }
-    }
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-
-    document.addEventListener('mousedown', handleOutside)
-    document.addEventListener('touchstart', handleOutside)
-    document.addEventListener('keydown', handleEscape)
-
-    return () => {
-      document.removeEventListener('mousedown', handleOutside)
-      document.removeEventListener('touchstart', handleOutside)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open])
-
-  return (
-    <div ref={wrapRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        style={{
-          width: '40px',
-          height: '40px',
-          borderRadius: '12px',
-          border: '1px solid #d1d5db',
-          background: '#fff',
-          color: '#475569',
-          cursor: 'pointer',
-          fontSize: '20px',
-          fontWeight: 700,
-          lineHeight: 1,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxSizing: 'border-box',
-        }}
-        aria-label="Open row actions"
-        aria-expanded={open}
-      >
-        …
-      </button>
-
-      {open && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '46px',
-            right: 0,
-            minWidth: '180px',
-            background: '#fff',
-            border: '1px solid #d1d5db',
-            borderRadius: '12px',
-            boxShadow: '0 10px 24px rgba(0, 0, 0, 0.12)',
-            overflow: 'hidden',
-            zIndex: 50,
-          }}
-        >
-          <button
-            type="button"
-            disabled={row.type === 'Transfer' || isWorking}
-            onClick={() => {
-              if (row.type === 'Transfer' || isWorking) return
-              setOpen(false)
-              onEdit(row)
-            }}
-            style={{
-              width: '100%',
-              padding: '12px 14px',
-              border: 'none',
-              background: '#fff',
-              textAlign: 'left',
-              fontSize: '14px',
-              fontWeight: 600,
-              color: row.type === 'Transfer' || isWorking ? '#94a3b8' : '#111827',
-              cursor: row.type === 'Transfer' || isWorking ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {row.type === 'Transfer' ? 'Edit Disabled for Transfer' : 'Edit'}
-          </button>
-
-          <button
-            type="button"
-            disabled={isWorking}
-            onClick={() => {
-              if (isWorking) return
-              setOpen(false)
-              onDelete(row.id)
-            }}
-            style={{
-              width: '100%',
-              padding: '12px 14px',
-              border: 'none',
-              borderTop: '1px solid #f1f5f9',
-              background: '#fff',
-              textAlign: 'left',
-              fontSize: '14px',
-              fontWeight: 600,
-              color: isWorking ? '#94a3b8' : '#dc2626',
-              cursor: isWorking ? 'not-allowed' : 'pointer',
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function WalletLedgerPage() {
   const params = useParams()
@@ -1399,11 +1270,20 @@ export default function WalletLedgerPage() {
                                 {formatCurrency(row.amount)}
                               </div>
 
-                              <InlineActionsMenu
-                                row={row}
-                                isWorking={isWorking}
-                                onEdit={handleEdit}
-                                onDelete={(id) => setDeleteId(id)}
+                              <RowActionsMenu
+                                items={[
+                                  {
+                                    label: row.type === 'Transfer' ? 'Edit Disabled for Transfer' : 'Edit',
+                                    disabled: row.type === 'Transfer' || isWorking,
+                                    onClick: () => handleEdit(row),
+                                  },
+                                  {
+                                    label: 'Delete',
+                                    danger: true,
+                                    disabled: isWorking,
+                                    onClick: () => setDeleteId(row.id),
+                                  },
+                                ]}
                               />
                             </div>
                           </div>

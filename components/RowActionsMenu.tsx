@@ -64,7 +64,15 @@ export default function RowActionsMenu({ items = [] }: RowActionsMenuProps) {
         left = viewportWidth - menuWidth - gutter
       }
 
-      if (top + menuHeight > viewportHeight - gutter) {
+      // On phones the bottom navigation bar covers the foot of the screen, so the
+      // menu opens upwards if it would run under the bar.
+      const bottomBar = document.querySelector('.mobile-nav')
+      const bottomLimit =
+        bottomBar && getComputedStyle(bottomBar).display !== 'none'
+          ? bottomBar.getBoundingClientRect().top
+          : viewportHeight
+
+      if (top + menuHeight > bottomLimit - gutter) {
         top = rect.top - menuHeight - 8
       }
 
