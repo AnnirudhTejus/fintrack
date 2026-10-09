@@ -9,11 +9,14 @@ import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
 import ConfirmModal from '@/components/ConfirmModal'
 import { walletBalance } from '@/lib/walletBalance'
+import CurrencySwitch from '@/components/CurrencySwitch'
 import {
   CURRENCIES,
   DEFAULT_CURRENCY,
+  currenciesInUse,
   currencyInfo,
   formatMoney,
+  useViewCurrency,
   walletCurrency,
   type CurrencyCode,
 } from '@/lib/currency'
@@ -65,30 +68,11 @@ function parseOpeningBalance(value: string) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function formatDate(dateString?: string) {
-  if (!dateString) return ''
-  const date = new Date(dateString)
-  if (Number.isNaN(date.getTime())) return dateString
-
-  return date.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
-}
-
 function getWalletTypeLabel(type: WalletType) {
   if (type === 'cash') return 'Cash'
   if (type === 'bank') return 'Bank'
   if (type === 'card') return 'Card'
   return 'E-Wallet'
-}
-
-function getWalletTypeBadgeStyle(type: WalletType): CSSProperties {
-  if (type === 'cash') return { background: '#ecfccb', color: '#4d7c0f' }
-  if (type === 'bank') return { background: '#dbeafe', color: '#1d4ed8' }
-  if (type === 'card') return { background: '#ffedd5', color: '#c2410c' }
-  return { background: '#ede9fe', color: '#7c3aed' }
 }
 
 export default function WalletsPage() {
@@ -99,7 +83,7 @@ export default function WalletsPage() {
   const [loading, setLoading] = useState(true)
 
   const [tab, setTab] = useState<WalletTab>('active')
-  const [searchQuery, setSearchQuery] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
 
   const [walletName, setWalletName] = useState('')
   const [walletType, setWalletType] = useState<WalletType>('cash')
@@ -195,36 +179,36 @@ export default function WalletsPage() {
     return wallets.filter((wallet) => wallet.is_archived === true)
   }, [wallets])
 
+  // One currency at a time, the same one chosen on the dashboard.
+  const availableCurrencies = useMemo(() => currenciesInUse(wallets), [wallets])
+  const viewCurrency = useViewCurrency(availableCurrencies)
+  const showCurrency = availableCurrencies.length > 1
+
+  const activeInView = useMemo(
+    () => activeWallets.filter((wallet) => walletCurrency(wallet) === viewCurrency),
+    [activeWallets, viewCurrency]
+  )
+
+  // Archived wallets are few and rarely opened, so every currency is listed there.
   const filteredWallets = useMemo<WalletListItem[]>(() => {
-    const source = tab === 'active' ? activeWallets : archivedWallets
-    const normalized = searchQuery.trim().toLowerCase()
-
+    const source = tab === 'active' ? activeInView : archivedWallets
     return source
-      .filter((wallet) => {
-        if (!normalized) return true
-
-        const info = currencyInfo(walletCurrency(wallet))
-        const searchable = [wallet.name, wallet.type, getWalletTypeLabel(wallet.type), info.code, info.short]
-          .join(' ')
-          .toLowerCase()
-
-        return searchable.includes(normalized)
-      })
       .map((wallet) => ({
         ...wallet,
         usageCount: usageMap[wallet.id] || 0,
         balance: balanceMap[wallet.id] || 0,
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [tab, activeWallets, archivedWallets, searchQuery, usageMap, balanceMap])
+  }, [tab, activeInView, archivedWallets, usageMap, balanceMap])
 
-  // Wallets grouped by currency, ringgit first. One group means no headings are needed.
-  const walletGroups = useMemo(() => {
-    return CURRENCIES.map((info) => ({
-      info,
-      wallets: filteredWallets.filter((wallet) => walletCurrency(wallet) === info.code),
-    })).filter((group) => group.wallets.length > 0)
-  }, [filteredWallets])
+  function openAddWallet() {
+    setWalletName('')
+    setWalletType('cash')
+    setOpeningBalance('')
+    setOpeningDate('')
+    setWalletCurrencyCode(viewCurrency)
+    setShowAdd(true)
+  }
 
   async function handleAddWallet(e: React.FormEvent) {
     e.preventDefault()
@@ -270,6 +254,7 @@ export default function WalletsPage() {
     setOpeningBalance('')
     setOpeningDate('')
     setWalletCurrencyCode(DEFAULT_CURRENCY)
+    setShowAdd(false)
     setSuccessMessage('Wallet added successfully.')
     await fetchData()
   }
@@ -378,13 +363,6 @@ export default function WalletsPage() {
     fontFamily: 'Arial, sans-serif',
   }
 
-  const sectionCard: CSSProperties = {
-    border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    background: '#fff',
-    padding: '16px',
-  }
-
   const inputStyle: CSSProperties = {
     width: '100%',
     height: '48px',
@@ -412,84 +390,30 @@ export default function WalletsPage() {
     boxSizing: 'border-box',
   }
 
-  const tabButton = (active: boolean): CSSProperties => ({
-    height: '48px',
-    padding: '0 20px',
-    borderRadius: '999px',
-    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-    background: active ? '#2563eb' : '#fff',
-    color: active ? '#fff' : '#111827',
-    cursor: 'pointer',
-    fontWeight: 700,
-    fontSize: '14px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-  })
-
   function renderWalletRow(wallet: WalletListItem) {
     const isWorking = workingId === wallet.id
     const usageCount = wallet.usageCount
+    const currency = walletCurrency(wallet)
 
     return (
       <div key={wallet.id} className="wallets-row">
-        <div className="wallets-row-top">
-          <div
-            style={{
-              fontSize: '15px',
-              fontWeight: 700,
-              color: '#111827',
-              wordBreak: 'break-word',
-            }}
-          >
-            {wallet.name}
-          </div>
-
-          <span
-            style={{
-              ...getWalletTypeBadgeStyle(wallet.type),
-              display: 'inline-flex',
-              alignItems: 'center',
-              padding: '2px 8px',
-              borderRadius: '999px',
-              fontSize: '11px',
-              fontWeight: 700,
-            }}
-          >
-            {getWalletTypeLabel(wallet.type)}
+        <Link href={`/wallets/${wallet.id}`} className="wallets-row-main">
+          <span className="wallets-row-name">{wallet.name}</span>
+          <span className="wallets-row-meta">
+            {getWalletTypeLabel(wallet.type)} · {usageCount} transaction{usageCount === 1 ? '' : 's'}
+            {tab === 'archived' && showCurrency ? ` · ${currencyInfo(currency).short}` : ''}
           </span>
+        </Link>
 
-          {wallet.is_archived && (
-            <span
-              style={{
-                background: '#e5e7eb',
-                color: '#4b5563',
-                display: 'inline-flex',
-                alignItems: 'center',
-                padding: '2px 8px',
-                borderRadius: '999px',
-                fontSize: '11px',
-                fontWeight: 700,
-              }}
-            >
-              Archived
-            </span>
-          )}
-        </div>
-
-        <div
-          className="wallets-balance-col"
-          style={{
-            fontSize: '15px',
-            fontWeight: 800,
-            color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
-          }}
+        <Link
+          href={`/wallets/${wallet.id}`}
+          className="wallets-row-balance"
+          style={{ color: wallet.balance >= 0 ? '#166534' : '#b91c1c' }}
         >
-          {formatCurrency(wallet.balance, walletCurrency(wallet))}
-        </div>
+          {formatCurrency(wallet.balance, currency)}
+        </Link>
 
-        <div className="wallets-menu-col" style={{ justifySelf: 'end' }}>
+        <div className="wallets-menu-col">
           <RowActionsMenu
             items={[
               {
@@ -521,52 +445,101 @@ export default function WalletsPage() {
             ]}
           />
         </div>
-
-        <div className="wallets-row-meta">
-          {usageCount} transaction{usageCount === 1 ? '' : 's'} · Opening{' '}
-          {formatCurrency(Number(wallet.opening_balance) || 0, walletCurrency(wallet))}
-          {wallet.opening_balance_date
-            ? ` as at ${formatDate(wallet.opening_balance_date)}`
-            : ''}
-        </div>
       </div>
     )
-  }
-
-  function renderGroups() {
-    if (walletGroups.length <= 1) return filteredWallets.map(renderWalletRow)
-    return walletGroups.map((group) => (
-      <div key={group.info.code}>
-        <div className="wallets-group-head">
-          <span>
-            {group.info.short} · {group.info.symbol}
-          </span>
-          <span>
-            {group.wallets.length} wallet{group.wallets.length === 1 ? '' : 's'}
-          </span>
-        </div>
-        {group.wallets.map(renderWalletRow)}
-      </div>
-    ))
   }
 
   return (
     <main style={pageWrap}>
       <style>{`
-        .wallets-page-header {
+        .wallets-head {
           display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 12px;
+          align-items: center;
+          gap: 14px;
           flex-wrap: wrap;
-          margin-bottom: 16px;
         }
 
-        .wallets-add-grid {
+        .wallets-tabs {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          margin: 16px 2px 12px;
+        }
+
+        .wallets-tab {
+          border: none;
+          background: none;
+          padding: 0 0 5px;
+          font: inherit;
+          font-size: 15px;
+          font-weight: 700;
+          color: #64748b;
+          border-bottom: 2px solid transparent;
+          cursor: pointer;
+        }
+
+        .wallets-tab[aria-pressed='true'] {
+          color: #0f172a;
+          border-bottom-color: #0f172a;
+        }
+
+        .wallets-add-link {
+          margin-left: auto;
+          border: none;
+          background: none;
+          padding: 0 0 5px;
+          font: inherit;
+          font-size: 15px;
+          font-weight: 700;
+          color: #0f172a;
+          cursor: pointer;
+        }
+
+        .wallets-list {
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #fff;
+          overflow: hidden;
+        }
+
+        .wallets-row {
           display: grid;
-          grid-template-columns: minmax(0, 1.4fr) minmax(130px, 0.7fr) minmax(170px, 0.9fr) minmax(150px, 0.8fr) minmax(160px, 0.8fr) auto;
-          gap: 12px;
-          align-items: end;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          gap: 10px;
+          align-items: center;
+          padding: 12px 10px 12px 16px;
+          border-top: 1px solid #f1f5f9;
+        }
+
+        .wallets-row:first-child {
+          border-top: none;
+        }
+
+        .wallets-row-main {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 0;
+          text-decoration: none;
+        }
+
+        .wallets-row-name {
+          font-size: 15px;
+          font-weight: 700;
+          color: #111827;
+          word-break: break-word;
+        }
+
+        .wallets-row-meta {
+          font-size: 12px;
+          color: #94a3b8;
+        }
+
+        .wallets-row-balance {
+          font-size: 15px;
+          font-weight: 800;
+          white-space: nowrap;
+          text-decoration: none;
         }
 
         .wallets-field-label {
@@ -577,95 +550,40 @@ export default function WalletsPage() {
           margin-bottom: 6px;
         }
 
-        .wallets-balance-col {
-          text-align: right;
-          white-space: nowrap;
-        }
-
-        .wallets-tabs-row {
+        .wallets-sheet-shade {
+          position: fixed;
+          inset: 0;
+          z-index: 9999;
+          background: rgba(0, 0, 0, 0.4);
           display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-          margin-bottom: 16px;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
         }
 
-        .wallets-row {
+        .wallets-sheet {
+          width: 100%;
+          max-width: 420px;
+          max-height: 92vh;
+          overflow-y: auto;
+          box-sizing: border-box;
+          background: #fff;
+          border-radius: 14px;
+          padding: 16px;
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto auto;
-          gap: 4px 12px;
-          align-items: center;
-          padding: 12px 16px;
-          border-top: 1px solid #f1f5f9;
-        }
-
-        .wallets-row:first-child {
-          border-top: none;
-        }
-
-        .wallets-group-head {
-          display: flex;
-          justify-content: space-between;
-          padding: 10px 16px;
-          background: #f8fafc;
-          border-top: 1px solid #e5e7eb;
-          border-bottom: 1px solid #f1f5f9;
-          font-size: 12px;
-          font-weight: 800;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          color: #475569;
-        }
-
-        .wallets-row-top {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-          flex-wrap: wrap;
-          min-width: 0;
-        }
-
-        .wallets-row-meta {
-          grid-column: 1 / -1;
-          font-size: 12px;
-          color: #64748b;
-        }
-
-        .wallets-menu-col .ram-trigger {
-          opacity: 0;
-          transition: opacity 0.15s ease;
-        }
-
-        .wallets-row:hover .wallets-menu-col .ram-trigger,
-        .wallets-row:focus-within .wallets-menu-col .ram-trigger {
-          opacity: 1;
-        }
-
-        @media (max-width: 900px) {
-          .wallets-add-grid {
-            grid-template-columns: 1fr 1fr;
-          }
-
-          .wallets-add-grid > :last-child {
-            grid-column: 1 / -1;
-          }
+          gap: 12px;
         }
 
         @media (max-width: 640px) {
-          .wallets-page-header {
-            flex-direction: column;
-            align-items: stretch !important;
+          .wallets-sheet-shade {
+            align-items: flex-end;
+            padding: 0;
           }
 
-          .wallets-add-grid {
-            grid-template-columns: 1fr !important;
-          }
-
-          .wallets-row {
-            padding: 12px 14px;
-          }
-
-          .wallets-menu-col .ram-trigger {
-            opacity: 1 !important;
+          .wallets-sheet {
+            max-width: none;
+            border-radius: 18px 18px 0 0;
+            padding-bottom: calc(16px + env(safe-area-inset-bottom));
           }
         }
       `}</style>
@@ -684,150 +602,137 @@ export default function WalletsPage() {
         </Link>
       </div>
 
-      <div className="wallets-page-header">
-        <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Wallets</h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '15px' }}>
-            Manage cash, bank, card, and e-wallet accounts.
-          </p>
-        </div>
+      <div className="wallets-head">
+        <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Wallets</h1>
+        <CurrencySwitch available={availableCurrencies} value={viewCurrency} />
       </div>
 
-      <section style={{ ...sectionCard, marginBottom: '16px' }}>
-        <h2
-          style={{
-            marginTop: 0,
-            marginBottom: '16px',
-            color: '#6b7280',
-            fontSize: '1.05rem',
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-          }}
-        >
-          Add New Wallet
-        </h2>
-
-        <form onSubmit={handleAddWallet} className="wallets-add-grid">
-          <label>
-            <span className="wallets-field-label">Wallet name</span>
-            <input
-              type="text"
-              placeholder="e.g. Maybank, Cash"
-              value={walletName}
-              onChange={(e) => setWalletName(e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-
-          <label>
-            <span className="wallets-field-label">Type</span>
-            <select
-              value={walletType}
-              onChange={(e) => setWalletType(e.target.value as WalletType)}
-              style={inputStyle}
-            >
-              <option value="cash">Cash</option>
-              <option value="bank">Bank</option>
-              <option value="card">Card</option>
-              <option value="ewallet">E-Wallet</option>
-            </select>
-          </label>
-
-          <label>
-            <span className="wallets-field-label">Currency</span>
-            <select
-              value={walletCurrencyCode}
-              onChange={(e) => setWalletCurrencyCode(e.target.value as CurrencyCode)}
-              style={inputStyle}
-            >
-              {CURRENCIES.map((info) => (
-                <option key={info.code} value={info.code}>
-                  {info.symbol} {info.code} · {info.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="wallets-field-label">
-              Opening balance ({currencyInfo(walletCurrencyCode).symbol})
-            </span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              placeholder="0.00"
-              value={openingBalance}
-              onChange={(e) => setOpeningBalance(e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-
-          <label>
-            <span className="wallets-field-label">As at end of (optional)</span>
-            <input
-              type="date"
-              max={todayInputValue()}
-              value={openingDate}
-              onChange={(e) => setOpeningDate(e.target.value)}
-              style={inputStyle}
-            />
-          </label>
-
-          <button type="submit" style={buttonPrimary}>
-            Add Wallet
-          </button>
-        </form>
-      </section>
-
-      <div className="wallets-tabs-row">
-        <button type="button" onClick={() => setTab('active')} style={tabButton(tab === 'active')}>
-          Active ({activeWallets.length})
-        </button>
-
+      <div className="wallets-tabs">
         <button
           type="button"
+          className="wallets-tab"
+          aria-pressed={tab === 'active'}
+          onClick={() => setTab('active')}
+        >
+          Active ({activeInView.length})
+        </button>
+        <button
+          type="button"
+          className="wallets-tab"
+          aria-pressed={tab === 'archived'}
           onClick={() => setTab('archived')}
-          style={tabButton(tab === 'archived')}
         >
           Archived ({archivedWallets.length})
         </button>
+        <button type="button" className="wallets-add-link" onClick={openAddWallet}>
+          + Add wallet
+        </button>
       </div>
 
-      <section style={{ ...sectionCard, marginBottom: '16px', padding: '12px' }}>
-        <input
-          type="text"
-          placeholder="Search wallets..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={inputStyle}
-        />
-      </section>
-
       {loading ? (
-        <section style={sectionCard}>
-          <p style={{ margin: 0 }}>Loading wallets...</p>
-        </section>
+        <p style={{ margin: 0, color: '#64748b' }}>Loading wallets...</p>
+      ) : filteredWallets.length === 0 ? (
+        <div className="wallets-list" style={{ padding: '16px', color: '#64748b', fontSize: '14px' }}>
+          {tab === 'active' ? 'No wallets yet.' : 'No archived wallets.'}
+        </div>
       ) : (
-        <section style={{ ...sectionCard, padding: 0, overflow: 'hidden' }}>
-          <div
-            style={{
-              padding: '16px',
-              borderBottom: filteredWallets.length > 0 ? '1px solid #f1f5f9' : 'none',
-              fontSize: '14px',
-              fontWeight: 700,
-              color: '#6b7280',
-            }}
-          >
-            {filteredWallets.length} wallet{filteredWallets.length === 1 ? '' : 's'}
-          </div>
+        <div className="wallets-list">{filteredWallets.map(renderWalletRow)}</div>
+      )}
 
-          {filteredWallets.length === 0 ? (
-            <div style={{ padding: '16px', color: '#64748b', fontSize: '14px' }}>No wallets found.</div>
-          ) : (
-            renderGroups()
-          )}
-        </section>
+      {showAdd && (
+        <div className="wallets-sheet-shade" onClick={() => setShowAdd(false)}>
+          <form className="wallets-sheet" onSubmit={handleAddWallet} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Add wallet</h3>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setShowAdd(false)}
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '999px',
+                  border: '1px solid #d1d5db',
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <label>
+              <span className="wallets-field-label">Wallet name</span>
+              <input
+                type="text"
+                placeholder="e.g. Maybank, Cash"
+                value={walletName}
+                onChange={(e) => setWalletName(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <label>
+              <span className="wallets-field-label">Type</span>
+              <select
+                value={walletType}
+                onChange={(e) => setWalletType(e.target.value as WalletType)}
+                style={inputStyle}
+              >
+                <option value="cash">Cash</option>
+                <option value="bank">Bank</option>
+                <option value="card">Card</option>
+                <option value="ewallet">E-Wallet</option>
+              </select>
+            </label>
+
+            <label>
+              <span className="wallets-field-label">Currency (locked once the wallet has transactions)</span>
+              <select
+                value={walletCurrencyCode}
+                onChange={(e) => setWalletCurrencyCode(e.target.value as CurrencyCode)}
+                style={inputStyle}
+              >
+                {CURRENCIES.map((info) => (
+                  <option key={info.code} value={info.code}>
+                    {info.symbol} {info.code} · {info.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span className="wallets-field-label">
+                Opening balance ({currencyInfo(walletCurrencyCode).symbol})
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                placeholder="0.00"
+                value={openingBalance}
+                onChange={(e) => setOpeningBalance(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <label>
+              <span className="wallets-field-label">As at end of (optional)</span>
+              <input
+                type="date"
+                max={todayInputValue()}
+                value={openingDate}
+                onChange={(e) => setOpeningDate(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+
+            <button type="submit" style={buttonPrimary}>
+              Add Wallet
+            </button>
+          </form>
+        </div>
       )}
 
       {editWallet && (
