@@ -9,6 +9,14 @@ import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
 import ConfirmModal from '@/components/ConfirmModal'
 import { walletBalance } from '@/lib/walletBalance'
+import {
+  CURRENCIES,
+  DEFAULT_CURRENCY,
+  currencyInfo,
+  formatMoney,
+  walletCurrency,
+  type CurrencyCode,
+} from '@/lib/currency'
 
 type WalletType = 'cash' | 'bank' | 'card' | 'ewallet'
 type WalletTab = 'active' | 'archived'
@@ -21,6 +29,7 @@ type WalletRow = {
   created_at?: string
   opening_balance?: number | null
   opening_balance_date?: string | null
+  currency?: string | null
 }
 
 type TransactionUsageRow = {
@@ -36,12 +45,8 @@ type WalletListItem = WalletRow & {
   balance: number
 }
 
-function formatCurrency(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
+function formatCurrency(value: number, currency: string) {
+  return formatMoney(value, currency)
 }
 
 function todayInputValue() {
@@ -100,10 +105,12 @@ export default function WalletsPage() {
   const [walletType, setWalletType] = useState<WalletType>('cash')
   const [openingBalance, setOpeningBalance] = useState('')
   const [openingDate, setOpeningDate] = useState('')
+  const [walletCurrencyCode, setWalletCurrencyCode] = useState<CurrencyCode>(DEFAULT_CURRENCY)
 
   const [editWallet, setEditWallet] = useState<WalletRow | null>(null)
   const [editBalance, setEditBalance] = useState('')
   const [editDate, setEditDate] = useState('')
+  const [editCurrency, setEditCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY)
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -120,7 +127,7 @@ export default function WalletsPage() {
     const [walletRes, txRes] = await Promise.all([
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date')
+        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date, currency')
         .order('name', { ascending: true }),
       supabase.from('transaction').select('type, amount, date, wallet_id, transfer_wallet_id'),
     ])
@@ -196,7 +203,8 @@ export default function WalletsPage() {
       .filter((wallet) => {
         if (!normalized) return true
 
-        const searchable = [wallet.name, wallet.type, getWalletTypeLabel(wallet.type)]
+        const info = currencyInfo(walletCurrency(wallet))
+        const searchable = [wallet.name, wallet.type, getWalletTypeLabel(wallet.type), info.code, info.short]
           .join(' ')
           .toLowerCase()
 
@@ -209,6 +217,14 @@ export default function WalletsPage() {
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [tab, activeWallets, archivedWallets, searchQuery, usageMap, balanceMap])
+
+  // Wallets grouped by currency, ringgit first. One group means no headings are needed.
+  const walletGroups = useMemo(() => {
+    return CURRENCIES.map((info) => ({
+      info,
+      wallets: filteredWallets.filter((wallet) => walletCurrency(wallet) === info.code),
+    })).filter((group) => group.wallets.length > 0)
+  }, [filteredWallets])
 
   async function handleAddWallet(e: React.FormEvent) {
     e.preventDefault()
@@ -240,6 +256,7 @@ export default function WalletsPage() {
         is_archived: false,
         opening_balance: parsedOpening,
         opening_balance_date: openingDate || null,
+        currency: walletCurrencyCode,
       },
     ])
 
@@ -252,6 +269,7 @@ export default function WalletsPage() {
     setWalletType('cash')
     setOpeningBalance('')
     setOpeningDate('')
+    setWalletCurrencyCode(DEFAULT_CURRENCY)
     setSuccessMessage('Wallet added successfully.')
     await fetchData()
   }
@@ -264,6 +282,7 @@ export default function WalletsPage() {
         : String(wallet.opening_balance)
     )
     setEditDate(wallet.opening_balance_date || '')
+    setEditCurrency(walletCurrency(wallet))
     setEditError('')
   }
 
@@ -292,6 +311,8 @@ export default function WalletsPage() {
       .update({
         opening_balance: parsedOpening,
         opening_balance_date: editDate || null,
+        // Currency can only change while the wallet has no transactions.
+        ...((usageMap[editWallet.id] || 0) === 0 ? { currency: editCurrency } : {}),
       })
       .eq('id', editWallet.id)
 
@@ -303,7 +324,7 @@ export default function WalletsPage() {
     }
 
     setEditWallet(null)
-    setSuccessMessage('Opening balance saved.')
+    setSuccessMessage('Wallet saved.')
     await fetchData()
   }
 
@@ -407,6 +428,128 @@ export default function WalletsPage() {
     boxSizing: 'border-box',
   })
 
+  function renderWalletRow(wallet: WalletListItem) {
+    const isWorking = workingId === wallet.id
+    const usageCount = wallet.usageCount
+
+    return (
+      <div key={wallet.id} className="wallets-row">
+        <div className="wallets-row-top">
+          <div
+            style={{
+              fontSize: '15px',
+              fontWeight: 700,
+              color: '#111827',
+              wordBreak: 'break-word',
+            }}
+          >
+            {wallet.name}
+          </div>
+
+          <span
+            style={{
+              ...getWalletTypeBadgeStyle(wallet.type),
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '2px 8px',
+              borderRadius: '999px',
+              fontSize: '11px',
+              fontWeight: 700,
+            }}
+          >
+            {getWalletTypeLabel(wallet.type)}
+          </span>
+
+          {wallet.is_archived && (
+            <span
+              style={{
+                background: '#e5e7eb',
+                color: '#4b5563',
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '2px 8px',
+                borderRadius: '999px',
+                fontSize: '11px',
+                fontWeight: 700,
+              }}
+            >
+              Archived
+            </span>
+          )}
+        </div>
+
+        <div
+          className="wallets-balance-col"
+          style={{
+            fontSize: '15px',
+            fontWeight: 800,
+            color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
+          }}
+        >
+          {formatCurrency(wallet.balance, walletCurrency(wallet))}
+        </div>
+
+        <div className="wallets-menu-col" style={{ justifySelf: 'end' }}>
+          <RowActionsMenu
+            items={[
+              {
+                label: 'View Ledger',
+                onClick: () => router.push(`/wallets/${wallet.id}`),
+              },
+              {
+                label: 'Edit Wallet',
+                disabled: isWorking,
+                onClick: () => openEditOpening(wallet),
+              },
+              tab === 'active'
+                ? {
+                    label: 'Archive',
+                    disabled: isWorking,
+                    onClick: () => handleArchive(wallet.id, true),
+                  }
+                : {
+                    label: 'Restore',
+                    disabled: isWorking,
+                    onClick: () => handleArchive(wallet.id, false),
+                  },
+              {
+                label: 'Delete',
+                danger: true,
+                disabled: isWorking || usageCount > 0,
+                onClick: () => setDeleteId(wallet.id),
+              },
+            ]}
+          />
+        </div>
+
+        <div className="wallets-row-meta">
+          {usageCount} transaction{usageCount === 1 ? '' : 's'} · Opening{' '}
+          {formatCurrency(Number(wallet.opening_balance) || 0, walletCurrency(wallet))}
+          {wallet.opening_balance_date
+            ? ` as at ${formatDate(wallet.opening_balance_date)}`
+            : ''}
+        </div>
+      </div>
+    )
+  }
+
+  function renderGroups() {
+    if (walletGroups.length <= 1) return filteredWallets.map(renderWalletRow)
+    return walletGroups.map((group) => (
+      <div key={group.info.code}>
+        <div className="wallets-group-head">
+          <span>
+            {group.info.short} · {group.info.symbol}
+          </span>
+          <span>
+            {group.wallets.length} wallet{group.wallets.length === 1 ? '' : 's'}
+          </span>
+        </div>
+        {group.wallets.map(renderWalletRow)}
+      </div>
+    ))
+  }
+
   return (
     <main style={pageWrap}>
       <style>{`
@@ -421,7 +564,7 @@ export default function WalletsPage() {
 
         .wallets-add-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1.6fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(160px, 0.8fr) auto;
+          grid-template-columns: minmax(0, 1.4fr) minmax(130px, 0.7fr) minmax(170px, 0.9fr) minmax(150px, 0.8fr) minmax(160px, 0.8fr) auto;
           gap: 12px;
           align-items: end;
         }
@@ -457,6 +600,20 @@ export default function WalletsPage() {
 
         .wallets-row:first-child {
           border-top: none;
+        }
+
+        .wallets-group-head {
+          display: flex;
+          justify-content: space-between;
+          padding: 10px 16px;
+          background: #f8fafc;
+          border-top: 1px solid #e5e7eb;
+          border-bottom: 1px solid #f1f5f9;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          color: #475569;
         }
 
         .wallets-row-top {
@@ -577,7 +734,24 @@ export default function WalletsPage() {
           </label>
 
           <label>
-            <span className="wallets-field-label">Opening balance (RM)</span>
+            <span className="wallets-field-label">Currency</span>
+            <select
+              value={walletCurrencyCode}
+              onChange={(e) => setWalletCurrencyCode(e.target.value as CurrencyCode)}
+              style={inputStyle}
+            >
+              {CURRENCIES.map((info) => (
+                <option key={info.code} value={info.code}>
+                  {info.symbol} {info.code} · {info.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span className="wallets-field-label">
+              Opening balance ({currencyInfo(walletCurrencyCode).symbol})
+            </span>
             <input
               type="number"
               inputMode="decimal"
@@ -651,110 +825,7 @@ export default function WalletsPage() {
           {filteredWallets.length === 0 ? (
             <div style={{ padding: '16px', color: '#64748b', fontSize: '14px' }}>No wallets found.</div>
           ) : (
-            filteredWallets.map((wallet) => {
-              const isWorking = workingId === wallet.id
-              const usageCount = wallet.usageCount
-
-              return (
-                <div key={wallet.id} className="wallets-row">
-                  <div className="wallets-row-top">
-                    <div
-                      style={{
-                        fontSize: '15px',
-                        fontWeight: 700,
-                        color: '#111827',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {wallet.name}
-                    </div>
-
-                    <span
-                      style={{
-                        ...getWalletTypeBadgeStyle(wallet.type),
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '2px 8px',
-                        borderRadius: '999px',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {getWalletTypeLabel(wallet.type)}
-                    </span>
-
-                    {wallet.is_archived && (
-                      <span
-                        style={{
-                          background: '#e5e7eb',
-                          color: '#4b5563',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '2px 8px',
-                          borderRadius: '999px',
-                          fontSize: '11px',
-                          fontWeight: 700,
-                        }}
-                      >
-                        Archived
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    className="wallets-balance-col"
-                    style={{
-                      fontSize: '15px',
-                      fontWeight: 800,
-                      color: wallet.balance >= 0 ? '#166534' : '#b91c1c',
-                    }}
-                  >
-                    {formatCurrency(wallet.balance)}
-                  </div>
-
-                  <div className="wallets-menu-col" style={{ justifySelf: 'end' }}>
-                    <RowActionsMenu
-                      items={[
-                        {
-                          label: 'View Ledger',
-                          onClick: () => router.push(`/wallets/${wallet.id}`),
-                        },
-                        {
-                          label: 'Set Opening Balance',
-                          disabled: isWorking,
-                          onClick: () => openEditOpening(wallet),
-                        },
-                        tab === 'active'
-                          ? {
-                              label: 'Archive',
-                              disabled: isWorking,
-                              onClick: () => handleArchive(wallet.id, true),
-                            }
-                          : {
-                              label: 'Restore',
-                              disabled: isWorking,
-                              onClick: () => handleArchive(wallet.id, false),
-                            },
-                        {
-                          label: 'Delete',
-                          danger: true,
-                          disabled: isWorking || usageCount > 0,
-                          onClick: () => setDeleteId(wallet.id),
-                        },
-                      ]}
-                    />
-                  </div>
-
-                  <div className="wallets-row-meta">
-                    {usageCount} transaction{usageCount === 1 ? '' : 's'} · Opening{' '}
-                    {formatCurrency(Number(wallet.opening_balance) || 0)}
-                    {wallet.opening_balance_date
-                      ? ` as at ${formatDate(wallet.opening_balance_date)}`
-                      : ''}
-                  </div>
-                </div>
-              )
-            })
+            renderGroups()
           )}
         </section>
       )}
@@ -787,12 +858,35 @@ export default function WalletsPage() {
             }}
           >
             <div>
-              <h3 style={{ margin: 0 }}>Opening balance</h3>
+              <h3 style={{ margin: 0 }}>Edit wallet</h3>
               <p style={{ fontSize: 14, color: '#555', margin: '6px 0 0' }}>{editWallet.name}</p>
             </div>
 
             <label>
-              <span className="wallets-field-label">Opening balance (RM)</span>
+              <span className="wallets-field-label">Currency</span>
+              <select
+                value={editCurrency}
+                onChange={(e) => setEditCurrency(e.target.value as CurrencyCode)}
+                disabled={(usageMap[editWallet.id] || 0) > 0}
+                style={{ ...inputStyle, background: (usageMap[editWallet.id] || 0) > 0 ? '#f1f5f9' : '#fff' }}
+              >
+                {CURRENCIES.map((info) => (
+                  <option key={info.code} value={info.code}>
+                    {info.symbol} {info.code} · {info.name}
+                  </option>
+                ))}
+              </select>
+              {(usageMap[editWallet.id] || 0) > 0 && (
+                <span style={{ display: 'block', fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                  Locked: this wallet already has transactions.
+                </span>
+              )}
+            </label>
+
+            <label>
+              <span className="wallets-field-label">
+                Opening balance ({currencyInfo(editCurrency).symbol})
+              </span>
               <input
                 type="number"
                 inputMode="decimal"

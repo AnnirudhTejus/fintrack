@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { formatMoney, walletCurrency } from '@/lib/currency'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { walletPeriodSummary } from '@/lib/walletBalance'
 import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
@@ -42,6 +43,7 @@ type WalletRow = {
   created_at?: string
   opening_balance?: number | null
   opening_balance_date?: string | null
+  currency?: string | null
 }
 
 type VendorRow = {
@@ -90,22 +92,6 @@ type InlineMenuProps = {
   isWorking: boolean
   onEdit: (row: LedgerDisplayRow) => void
   onDelete: (id: string) => void
-}
-
-function formatCurrency(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
-}
-
-function formatCurrencyCompact(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatPrettyDate(dateString: string) {
@@ -314,6 +300,10 @@ export default function WalletLedgerPage() {
   const walletId = Number(params?.id)
 
   const [wallet, setWallet] = useState<WalletRow | null>(null)
+  // Every amount on this page is in the wallet's own currency.
+  const currency = walletCurrency(wallet)
+  const formatCurrency = (value: number) => formatMoney(value, currency)
+  const formatCurrencyCompact = (value: number) => formatMoney(value, currency, 0)
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
   const [wallets, setWallets] = useState<WalletRow[]>([])
   const [vendors, setVendors] = useState<VendorRow[]>([])
@@ -351,7 +341,7 @@ export default function WalletLedgerPage() {
     const [walletRes, txRes, walletsRes, vendorsRes, categoriesRes] = await Promise.all([
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date')
+        .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date, currency')
         .eq('id', walletId)
         .maybeSingle(),
       supabase

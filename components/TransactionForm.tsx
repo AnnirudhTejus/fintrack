@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import WalletPicker from '@/components/WalletPicker'
+import { currenciesInUse, currencyInfo, useViewCurrency, walletCurrency } from '@/lib/currency'
 
 export type TransactionType = 'Expense' | 'Income' | 'Investment'
 
@@ -27,6 +29,7 @@ type WalletRow = {
   name: string
   type: 'cash' | 'bank' | 'card' | 'ewallet'
   is_archived?: boolean
+  currency?: string | null
 }
 
 export type TransactionFormInitialValues = {
@@ -108,7 +111,7 @@ export function loadTransactionLookups(refresh = false): Promise<Lookups> {
       .order('name', { ascending: true }),
     supabase
       .from('wallets')
-      .select('id, name, type, is_archived')
+      .select('id, name, type, is_archived, currency')
       .order('name', { ascending: true }),
   ])
     .then(([categoryRes, vendorRes, walletRes]) => {
@@ -263,6 +266,25 @@ export default function TransactionForm({
   const isTransfer = type === 'Transfer'
   const isEditMode = mode === 'edit'
 
+  // The currency comes from the wallet. The group being viewed elsewhere is listed first.
+  const viewCurrency = useViewCurrency(currenciesInUse(wallets))
+  const selectedWallet = wallets.find((wallet) => String(wallet.id) === walletId)
+  const selectedCurrency = selectedWallet ? currencyInfo(walletCurrency(selectedWallet)) : null
+
+  // Transfers stay within one currency until moving money between currencies is added.
+  const transferTargets = activeWallets.filter(
+    (wallet) =>
+      String(wallet.id) !== walletId &&
+      (!selectedWallet || walletCurrency(wallet) === walletCurrency(selectedWallet))
+  )
+
+  function changeWallet(nextId: string) {
+    setWalletId(nextId)
+    const next = wallets.find((wallet) => String(wallet.id) === nextId)
+    const target = wallets.find((wallet) => String(wallet.id) === transferWalletId)
+    if (next && target && walletCurrency(next) !== walletCurrency(target)) setTransferWalletId('')
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrorMessage('')
@@ -296,6 +318,12 @@ export default function TransactionForm({
 
       if (walletId === transferWalletId) {
         setErrorMessage('Source and destination wallet cannot be the same.')
+        return
+      }
+
+      const target = wallets.find((wallet) => String(wallet.id) === transferWalletId)
+      if (selectedWallet && target && walletCurrency(selectedWallet) !== walletCurrency(target)) {
+        setErrorMessage('Transfers must be between wallets of the same currency.')
         return
       }
     } else {
@@ -535,36 +563,33 @@ export default function TransactionForm({
             <div className="transaction-form-row-two" style={rowTwo}>
               <div>
                 <label style={labelStyle}>From Wallet</label>
-                <select
+                <WalletPicker
+                  wallets={activeWallets}
                   value={walletId}
-                  onChange={(e) => setWalletId(e.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="">Select source wallet</option>
-                  {activeWallets.map((wallet) => (
-                    <option key={wallet.id} value={String(wallet.id)}>
-                      {wallet.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={changeWallet}
+                  placeholder="Select source wallet"
+                  sheetTitle="Transfer from"
+                  firstCurrency={viewCurrency}
+                  inputStyle={inputStyle}
+                />
               </div>
 
               <div>
                 <label style={labelStyle}>To Wallet</label>
-                <select
+                <WalletPicker
+                  wallets={transferTargets}
                   value={transferWalletId}
-                  onChange={(e) => setTransferWalletId(e.target.value)}
-                  style={inputStyle}
-                >
-                  <option value="">Select destination wallet</option>
-                  {activeWallets
-                    .filter((wallet) => String(wallet.id) !== walletId)
-                    .map((wallet) => (
-                      <option key={wallet.id} value={String(wallet.id)}>
-                        {wallet.name}
-                      </option>
-                    ))}
-                </select>
+                  onChange={setTransferWalletId}
+                  placeholder="Select destination wallet"
+                  sheetTitle="Transfer to"
+                  firstCurrency={viewCurrency}
+                  hint={
+                    selectedWallet && currenciesInUse(activeWallets).length > 1
+                      ? `Only ${currencyInfo(walletCurrency(selectedWallet)).short} wallets are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. Moving money between currencies will come later.`
+                      : undefined
+                  }
+                  inputStyle={inputStyle}
+                />
               </div>
             </div>
           )}
@@ -572,34 +597,54 @@ export default function TransactionForm({
           {!isTransfer && (
             <div>
               <label style={labelStyle}>Wallet</label>
-              <select
+              <WalletPicker
+                wallets={activeWallets}
                 value={walletId}
-                onChange={(e) => setWalletId(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">Select wallet</option>
-                {activeWallets.map((wallet) => (
-                  <option key={wallet.id} value={String(wallet.id)}>
-                    {wallet.name}
-                  </option>
-                ))}
-              </select>
+                onChange={changeWallet}
+                placeholder="Select wallet"
+                sheetTitle="Choose wallet"
+                firstCurrency={viewCurrency}
+                inputStyle={inputStyle}
+              />
             </div>
           )}
 
           <div className="transaction-form-row-three" style={rowThree}>
             <div>
               <label style={labelStyle}>Amount</label>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.00"
-                style={inputStyle}
-              />
+              <div style={{ position: 'relative' }}>
+                {selectedCurrency && (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      left: '12px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      fontWeight: 800,
+                      fontSize: '14px',
+                      color: '#2563eb',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    {selectedCurrency.symbol}
+                  </span>
+                )}
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                  aria-label={selectedCurrency ? `Amount in ${selectedCurrency.name}` : 'Amount'}
+                  style={{
+                    ...inputStyle,
+                    paddingLeft: selectedCurrency ? `${20 + selectedCurrency.symbol.length * 9}px` : '12px',
+                  }}
+                />
+              </div>
             </div>
 
             <div>

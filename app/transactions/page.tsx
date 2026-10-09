@@ -5,6 +5,14 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { buildDateRange, isDateInRange, toInputDate } from '@/lib/dateFilters'
+import CurrencySwitch from '@/components/CurrencySwitch'
+import {
+  currenciesInUse,
+  currencyInfo,
+  formatMoney,
+  useViewCurrency,
+  walletCurrency,
+} from '@/lib/currency'
 import PeriodFilter, { formatMonthLabel, getSelectedMonth, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
@@ -55,6 +63,7 @@ type WalletRow = {
   name: string
   type: 'cash' | 'bank' | 'card' | 'ewallet'
   is_archived?: boolean
+  currency?: string | null
 }
 
 type DisplayTransaction = {
@@ -89,22 +98,6 @@ type GroupedTransactions = {
   expenseTotal: number
   incomeTotal: number
   transferTotal: number
-}
-
-function formatCurrency(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
-}
-
-function formatCurrencyCompact(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatPrettyDate(dateString: string) {
@@ -259,7 +252,7 @@ export default function TransactionsPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived')
+        .select('id, name, type, is_archived, currency')
         .order('name', { ascending: true }),
       supabase
         .from('vendors')
@@ -334,6 +327,19 @@ export default function TransactionsPage() {
     })
     return map
   }, [wallets])
+
+  // Only one currency is listed at a time, the same one chosen on the dashboard.
+  const availableCurrencies = useMemo(() => currenciesInUse(wallets), [wallets])
+  const viewCurrency = useViewCurrency(availableCurrencies)
+  const showCurrencySwitch = availableCurrencies.length > 1
+  const formatCurrency = (value: number) => formatMoney(value, viewCurrency)
+  const formatCurrencyCompact = (value: number) => formatMoney(value, viewCurrency, 0)
+
+  // A wallet chosen in the filter only applies while its currency is the one shown.
+  const activeWalletFilter =
+    filterWalletId !== 'All' && walletCurrency(walletMap[Number(filterWalletId)]) === viewCurrency
+      ? filterWalletId
+      : 'All'
 
   const vendorMap = useMemo(() => {
     const map: Record<number, VendorRow> = {}
@@ -446,6 +452,9 @@ export default function TransactionsPage() {
     const normalizedQuery = searchQuery.trim().toLowerCase()
 
     return displayTransactions.filter((item) => {
+      const walletId = item.wallet_id ?? item.transfer_wallet_id
+      if (walletCurrency(walletId ? walletMap[walletId] : null) !== viewCurrency) return false
+
       const typeMatch = filterType === 'All' ? true : item.type === filterType
 
       const categoryMatch =
@@ -456,10 +465,10 @@ export default function TransactionsPage() {
             : item.category_id === filterCategoryId
 
       const walletMatch =
-        filterWalletId === 'All'
+        activeWalletFilter === 'All'
           ? true
-          : String(item.wallet_id || '') === filterWalletId ||
-            String(item.transfer_wallet_id || '') === filterWalletId
+          : String(item.wallet_id || '') === activeWalletFilter ||
+            String(item.transfer_wallet_id || '') === activeWalletFilter
 
       const searchableText = [
         item.title,
@@ -479,9 +488,11 @@ export default function TransactionsPage() {
     })
   }, [
     displayTransactions,
+    walletMap,
+    viewCurrency,
     filterType,
     filterCategoryId,
-    filterWalletId,
+    activeWalletFilter,
     searchQuery,
     filterDateFrom,
     filterDateTo,
@@ -582,8 +593,8 @@ export default function TransactionsPage() {
   const summaryContextParts = useMemo(() => {
     const parts: string[] = []
 
-    if (filterWalletId !== 'All') {
-      const wallet = wallets.find((item) => String(item.id) === filterWalletId)
+    if (activeWalletFilter !== 'All') {
+      const wallet = wallets.find((item) => String(item.id) === activeWalletFilter)
       if (wallet) parts.push(wallet.name)
     }
 
@@ -617,7 +628,7 @@ export default function TransactionsPage() {
 
     return parts
   }, [
-    filterWalletId,
+    activeWalletFilter,
     wallets,
     filterCategoryId,
     availableFilterCategories,
@@ -632,14 +643,14 @@ export default function TransactionsPage() {
     const countText = `${filteredTransactions.length} ${filteredTransactions.length === 1 ? 'transaction' : 'transactions'}`
     const amountText =
       filterType === 'All'
-        ? `${formatCurrency(filteredGrandTotal)} total`
-        : formatCurrency(filteredGrandTotal)
+        ? `${formatMoney(filteredGrandTotal, viewCurrency)} total`
+        : formatMoney(filteredGrandTotal, viewCurrency)
 
     const base = `${summaryTitle} · ${amountText} · ${countText}`
 
     if (summaryContextParts.length === 0) return base
     return `${base} · ${summaryContextParts.join(' · ')}`
-  }, [filteredTransactions.length, filteredGrandTotal, filterType, summaryTitle, summaryContextParts])
+  }, [filteredTransactions.length, filteredGrandTotal, filterType, summaryTitle, summaryContextParts, viewCurrency])
 
   function handlePeriodChange(next: Period) {
     setPeriod(next)
@@ -782,6 +793,7 @@ export default function TransactionsPage() {
       'Vendor',
       'Wallet',
       'Transfer Wallet',
+      'Currency',
       'Amount',
       'Note',
     ]
@@ -794,6 +806,7 @@ export default function TransactionsPage() {
       item.vendor || '',
       item.wallet_name || '',
       item.transfer_wallet_name || '',
+      viewCurrency,
       item.amount.toFixed(2),
       item.note || '',
     ])
@@ -1162,9 +1175,14 @@ export default function TransactionsPage() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Transactions</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Transactions</h1>
+            <CurrencySwitch available={availableCurrencies} value={viewCurrency} />
+          </div>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '15px' }}>
-            Search, edit, manage, and export your records.
+            {showCurrencySwitch
+              ? `Showing ${currencyInfo(viewCurrency).short} wallets only.`
+              : 'Search, edit, manage, and export your records.'}
           </p>
         </div>
 
@@ -1266,13 +1284,13 @@ export default function TransactionsPage() {
             </select>
 
             <select
-              value={filterWalletId}
+              value={activeWalletFilter}
               onChange={(e) => setFilterWalletId(e.target.value)}
               style={inputStyle}
             >
               <option value="All">All Wallets</option>
               {wallets
-                .filter((wallet) => wallet.is_archived !== true)
+                .filter((wallet) => wallet.is_archived !== true && walletCurrency(wallet) === viewCurrency)
                 .map((wallet) => (
                   <option key={wallet.id} value={String(wallet.id)}>
                     {wallet.name}

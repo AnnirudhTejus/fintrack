@@ -10,6 +10,16 @@ import TransactionForm, {
   TransactionType,
 } from '@/components/TransactionForm'
 import { walletBalance, walletPeriodSummary } from '@/lib/walletBalance'
+import CurrencySwitch from '@/components/CurrencySwitch'
+import {
+  currenciesInUse,
+  currencyInfo,
+  formatMoney,
+  formatNumber,
+  useViewCurrency,
+  walletCurrency,
+  type CurrencyCode,
+} from '@/lib/currency'
 import PeriodFilter, {
   formatMonthLabel,
   getSelectedMonth,
@@ -41,6 +51,7 @@ type WalletRow = {
   is_archived?: boolean
   opening_balance?: number | null
   opening_balance_date?: string | null
+  currency?: string | null
 }
 
 type CategoryRow = {
@@ -78,41 +89,6 @@ type DisplayTransaction = {
   note: string | null
   walletName: string | null
   walletType?: WalletRow['type']
-}
-
-function formatCurrency(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
-}
-
-function formatCurrencyCompact(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
-}
-
-// Same as formatBalance but without the RM prefix, for the small secondary figures.
-// A balance that is not known (before the wallet's opening date) shows as a dash.
-function formatAmount(value: number | null) {
-  if (value === null) return '–'
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}${formatted}`
-}
-
-function formatBalance(value: number) {
-  const formatted = Math.abs(value).toLocaleString('en-MY', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-  return `${value < 0 ? '-' : ''}RM ${formatted}`
 }
 
 function formatDate(dateString: string) {
@@ -213,12 +189,12 @@ function getWalletBadgeStyle(walletType?: WalletRow['type']): React.CSSPropertie
   return { background: '#e5e7eb', color: '#4b5563' }
 }
 
-function getChangeLabel(current: number, previous: number) {
+function getChangeLabel(current: number, previous: number, currency: CurrencyCode) {
   const delta = current - previous
   const abs = Math.abs(delta)
   return {
     delta,
-    text: `${delta >= 0 ? '+' : '-'}${formatCurrencyCompact(abs)} vs previous period`,
+    text: `${delta >= 0 ? '+' : '-'}${formatMoney(abs, currency, 0)} vs previous period`,
   }
 }
 
@@ -256,7 +232,7 @@ export default function DashboardPage() {
         .order('created_at', { ascending: false }),
       supabase
         .from('wallets')
-        .select('id, name, type, is_archived, opening_balance, opening_balance_date')
+        .select('id, name, type, is_archived, opening_balance, opening_balance_date, currency')
         .order('name', { ascending: true }),
       supabase
         .from('categories')
@@ -326,6 +302,23 @@ export default function DashboardPage() {
     return map
   }, [wallets])
 
+  // Only one currency is shown at a time. A transaction takes its wallet's currency.
+  const availableCurrencies = useMemo(() => currenciesInUse(wallets), [wallets])
+  const viewCurrency = useViewCurrency(availableCurrencies)
+  const showCurrencySwitch = availableCurrencies.length > 1
+
+  const viewTransactions = useMemo(() => {
+    return transactions.filter((tx) => {
+      const walletId = tx.wallet_id ?? tx.transfer_wallet_id
+      return walletCurrency(walletId ? walletMap[walletId] : null) === viewCurrency
+    })
+  }, [transactions, walletMap, viewCurrency])
+
+  const formatCurrency = (value: number) => formatMoney(value, viewCurrency)
+  const formatBalance = formatCurrency
+  // The small secondary figures: no symbol, and a dash when the balance is not known.
+  const formatAmount = (value: number | null) => (value === null ? '–' : formatNumber(value, viewCurrency))
+
   const categoryMap = useMemo(() => {
     const map: Record<number, CategoryRow> = {}
     categories.forEach((category) => {
@@ -385,12 +378,12 @@ export default function DashboardPage() {
   }, [timeFilter, monthOffset, currentRange.start, currentRange.end])
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter((tx) => dateInRange(tx.date, currentRange.start, currentRange.end))
-  }, [transactions, currentRange.start, currentRange.end])
+    return viewTransactions.filter((tx) => dateInRange(tx.date, currentRange.start, currentRange.end))
+  }, [viewTransactions, currentRange.start, currentRange.end])
 
   const previousTransactions = useMemo(() => {
-    return transactions.filter((tx) => dateInRange(tx.date, previousRange.start, previousRange.end))
-  }, [transactions, previousRange.start, previousRange.end])
+    return viewTransactions.filter((tx) => dateInRange(tx.date, previousRange.start, previousRange.end))
+  }, [viewTransactions, previousRange.start, previousRange.end])
 
   const summaryTotals = useMemo(() => {
     let income = 0
@@ -438,7 +431,7 @@ export default function DashboardPage() {
     const today = toInputDate(startOfDay(new Date()))
 
     return wallets
-      .filter((wallet) => wallet.is_archived !== true)
+      .filter((wallet) => wallet.is_archived !== true && walletCurrency(wallet) === viewCurrency)
       .map((wallet) => {
         const period = walletPeriodSummary(wallet, transactions, from, to)
 
@@ -454,7 +447,7 @@ export default function DashboardPage() {
         }
       })
       .sort((a, b) => Math.abs(b.current) - Math.abs(a.current))
-  }, [transactions, wallets, currentRange.start, currentRange.end, timeFilter])
+  }, [transactions, wallets, currentRange.start, currentRange.end, timeFilter, viewCurrency])
 
   const expenseBreakdown = useMemo(() => {
     const expenseRows = filteredTransactions.filter((tx) => tx.type === 'Expense')
@@ -967,9 +960,13 @@ export default function DashboardPage() {
 
       <div className="dashboard-topbar">
         <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>FinTrack</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+            <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>FinTrack</h1>
+            <CurrencySwitch available={availableCurrencies} value={viewCurrency} />
+          </div>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '15px' }}>
             Showing: {currentLabel}
+            {showCurrencySwitch && ` · ${currencyInfo(viewCurrency).short}`}
           </p>
         </div>
 
@@ -1067,28 +1064,28 @@ export default function DashboardPage() {
         {summaryCard(
           'Income',
           summaryTotals.income,
-          getChangeLabel(summaryTotals.income, previousTotals.income).text,
+          getChangeLabel(summaryTotals.income, previousTotals.income, viewCurrency).text,
           '#166534',
           true
         )}
         {summaryCard(
           'Expenses',
           summaryTotals.expense,
-          getChangeLabel(summaryTotals.expense, previousTotals.expense).text,
+          getChangeLabel(summaryTotals.expense, previousTotals.expense, viewCurrency).text,
           '#b91c1c',
           false
         )}
         {summaryCard(
           'Investments',
           summaryTotals.investment,
-          getChangeLabel(summaryTotals.investment, previousTotals.investment).text,
+          getChangeLabel(summaryTotals.investment, previousTotals.investment, viewCurrency).text,
           '#2563eb',
           false
         )}
         {summaryCard(
           'Net Balance',
           summaryTotals.net,
-          getChangeLabel(summaryTotals.net, previousTotals.net).text,
+          getChangeLabel(summaryTotals.net, previousTotals.net, viewCurrency).text,
           summaryTotals.net >= 0 ? '#166534' : '#b91c1c',
           true
         )}
