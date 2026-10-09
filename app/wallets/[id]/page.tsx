@@ -7,7 +7,8 @@ import { supabase } from '@/lib/supabase'
 import { formatMoney, walletCurrency } from '@/lib/currency'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { walletPeriodSummary } from '@/lib/walletBalance'
-import { buildDateRange, isDateInRange, type DatePreset } from '@/lib/dateFilters'
+import { isDateInRange } from '@/lib/dateFilters'
+import PeriodFilter, { rangeForPeriod, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
@@ -156,16 +157,6 @@ function getWalletBadgeStyle(walletType?: WalletRow['type']): CSSProperties {
   return { background: '#e5e7eb', color: '#4b5563' }
 }
 
-const presetOptions: { value: DatePreset; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'this_week', label: 'This Week' },
-  { value: 'this_month', label: 'This Month' },
-  { value: 'last_30_days', label: 'Last 30 Days' },
-  { value: 'this_year', label: 'This Year' },
-  { value: 'all_time', label: 'All Time' },
-  { value: 'custom', label: 'Custom' },
-]
-
 export default function WalletLedgerPage() {
   const params = useParams()
   const walletId = Number(params?.id)
@@ -181,7 +172,8 @@ export default function WalletLedgerPage() {
   const [categories, setCategories] = useState<CategoryRow[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [datePreset, setDatePreset] = useState<DatePreset>('this_month')
+  const [period, setPeriod] = useState<Period>('month')
+  const [monthOffset, setMonthOffset] = useState(0)
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
   const [typeFilter, setTypeFilter] = useState<LedgerTypeFilter>('All')
@@ -288,7 +280,7 @@ export default function WalletLedgerPage() {
   }, [])
 
   useEffect(() => {
-    const range = buildDateRange('this_month')
+    const range = rangeForPeriod('month', 0)
     setFilterDateFrom(range.from)
     setFilterDateTo(range.to)
   }, [])
@@ -457,29 +449,34 @@ export default function WalletLedgerPage() {
       .map((key) => groups[key])
   }, [filteredRows])
 
-  function handlePresetChange(preset: DatePreset) {
-    setDatePreset(preset)
+  function handlePeriodChange(next: Period) {
+    setPeriod(next)
+    const range = rangeForPeriod(next, monthOffset, filterDateFrom, filterDateTo)
+    setFilterDateFrom(range.from)
+    setFilterDateTo(range.to)
+  }
 
-    if (preset === 'custom') return
-
-    const range = buildDateRange(preset, filterDateFrom, filterDateTo)
+  function handleMonthOffsetChange(next: number) {
+    setMonthOffset(next)
+    const range = rangeForPeriod('month', next)
     setFilterDateFrom(range.from)
     setFilterDateTo(range.to)
   }
 
   function handleFromDateChange(value: string) {
-    setDatePreset('custom')
+    setPeriod('custom')
     setFilterDateFrom(value)
   }
 
   function handleToDateChange(value: string) {
-    setDatePreset('custom')
+    setPeriod('custom')
     setFilterDateTo(value)
   }
 
   function clearFilters() {
-    const range = buildDateRange('all_time')
-    setDatePreset('all_time')
+    setPeriod('month')
+    setMonthOffset(0)
+    const range = rangeForPeriod('month', 0)
     setFilterDateFrom(range.from)
     setFilterDateTo(range.to)
     setTypeFilter('All')
@@ -588,22 +585,6 @@ export default function WalletLedgerPage() {
     boxSizing: 'border-box',
   }
 
-  const presetButton = (active: boolean): CSSProperties => ({
-    height: '42px',
-    padding: '0 18px',
-    borderRadius: '999px',
-    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-    background: active ? '#2563eb' : '#fff',
-    color: active ? '#fff' : '#111827',
-    cursor: 'pointer',
-    fontWeight: 700,
-    fontSize: '13px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-  })
-
   const buttonSecondary: CSSProperties = {
     height: '48px',
     padding: '0 14px',
@@ -653,13 +634,6 @@ export default function WalletLedgerPage() {
           gap: 12px;
           flex-wrap: wrap;
           justify-content: flex-end;
-        }
-
-        .wallet-ledger-quick-date-row {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-bottom: 10px;
         }
 
         .wallet-ledger-custom-dates {
@@ -769,20 +743,21 @@ export default function WalletLedgerPage() {
           }
 
           .wallet-ledger-filter-grid {
-            flex-direction: column;
-            align-items: stretch !important;
-            gap: 10px !important;
+            gap: 8px !important;
           }
 
-          .wallet-ledger-filter-grid > .ledger-type-select,
-          .wallet-ledger-filter-grid > .ledger-transfer-select {
-            flex: none !important;
+          .wallet-ledger-filter-grid > .ledger-type-select {
+            flex: 1 1 0 !important;
             min-width: 0 !important;
-            width: 100% !important;
+          }
+
+          .wallet-ledger-filter-grid > .ledger-transfer-select {
+            order: 3;
+            flex: 1 1 100% !important;
+            min-width: 0 !important;
           }
 
           .wallet-ledger-filter-grid > button {
-            width: 100% !important;
             flex: 0 0 auto !important;
           }
 
@@ -998,20 +973,16 @@ export default function WalletLedgerPage() {
       </section>
 
       <section style={{ ...sectionCard, marginBottom: '16px', padding: '12px' }}>
-        <div className="wallet-ledger-quick-date-row">
-          {presetOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => handlePresetChange(option.value)}
-              style={presetButton(datePreset === option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+        <div style={{ marginBottom: '10px' }}>
+          <PeriodFilter
+            period={period}
+            monthOffset={monthOffset}
+            onPeriodChange={handlePeriodChange}
+            onMonthOffsetChange={handleMonthOffsetChange}
+          />
         </div>
 
-        {datePreset === 'custom' && (
+        {period === 'custom' && (
           <div className="wallet-ledger-custom-dates">
             <input
               type="date"

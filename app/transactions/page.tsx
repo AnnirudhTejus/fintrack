@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
-import { buildDateRange, isDateInRange, toInputDate } from '@/lib/dateFilters'
+import { isDateInRange } from '@/lib/dateFilters'
 import CurrencySwitch from '@/components/CurrencySwitch'
 import {
   currenciesInUse,
@@ -13,7 +13,7 @@ import {
   useViewCurrency,
   walletCurrency,
 } from '@/lib/currency'
-import PeriodFilter, { formatMonthLabel, getSelectedMonth, type Period } from '@/components/PeriodFilter'
+import PeriodFilter, { formatMonthLabel, rangeForPeriod, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
@@ -194,17 +194,6 @@ function getCsvDirection(item: DisplayTransaction) {
   if (item.type === 'Transfer') return 'Transfer'
   if (item.direction === 'in') return 'In'
   return 'Out'
-}
-
-// Date range for each period button. Custom keeps whatever dates are typed in.
-function rangeForPeriod(period: Period, monthOffset: number, from: string, to: string) {
-  if (period === 'week') return buildDateRange('this_week')
-  if (period === 'year') return buildDateRange('this_year')
-  if (period === 'all_time') return { from: '', to: '' }
-  if (period === 'custom') return { from, to }
-  const start = getSelectedMonth(monthOffset)
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
-  return { from: toInputDate(start), to: toInputDate(end) }
 }
 
 export default function TransactionsPage() {

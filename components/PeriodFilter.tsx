@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { buildDateRange, toInputDate } from '@/lib/dateFilters'
 
 // The period buttons shared by the Dashboard and Transactions pages:
 // This Week · ‹ Month › · This Year · All Time · Custom
@@ -41,6 +42,18 @@ export function getWeekStart() {
   const day = today.getDay()
   const diff = day === 0 ? -6 : 1 - day
   return new Date(today.getFullYear(), today.getMonth(), today.getDate() + diff)
+}
+
+// From/to dates (YYYY-MM-DD, blank = open-ended) for a period button.
+// A month runs the whole month. Custom keeps whatever dates are typed in.
+export function rangeForPeriod(period: Period, monthOffset: number, from = '', to = '') {
+  if (period === 'week') return buildDateRange('this_week')
+  if (period === 'year') return buildDateRange('this_year')
+  if (period === 'all_time') return { from: '', to: '' }
+  if (period === 'custom') return { from, to }
+  const start = getSelectedMonth(monthOffset)
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 0)
+  return { from: toInputDate(start), to: toInputDate(end) }
 }
 
 type PeriodFilterProps = {
