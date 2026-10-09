@@ -610,6 +610,13 @@ export default function WalletLedgerPage() {
     return <main style={pageWrap}>Wallet not found.</main>
   }
 
+  // The current period's closing is today's balance; a finished period closes on its last day.
+  const todayKey = new Date().toLocaleDateString('en-CA')
+  const closingLabel =
+    !filterDateTo || filterDateTo >= todayKey
+      ? `as on ${formatDateShort(todayKey)}`
+      : formatDateShort(filterDateTo)
+
   return (
     <main style={pageWrap}>
       <style>{`
@@ -622,18 +629,47 @@ export default function WalletLedgerPage() {
           margin-bottom: 16px;
         }
 
-        .wallet-ledger-summary-top {
+        .ledger-summary {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 12px;
+          grid-template-columns: minmax(200px, auto) minmax(0, 1fr);
+          gap: 16px;
           align-items: center;
         }
 
-        .wallet-ledger-summary-cards {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
+        .ledger-summary-closing-value {
+          font-size: 1.8rem;
+          font-weight: 800;
+          margin-top: 2px;
+          white-space: nowrap;
+        }
+
+        .ledger-figures {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .ledger-figure {
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          background: #f8fafc;
+          padding: 10px 12px;
+          min-width: 0;
+        }
+
+        .ledger-figure-label {
+          font-size: 12px;
+          font-weight: 700;
+          color: #64748b;
+        }
+
+        .ledger-figure-value {
+          font-size: 1.05rem;
+          font-weight: 800;
+          margin-top: 3px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .wallet-ledger-custom-dates {
@@ -698,12 +734,9 @@ export default function WalletLedgerPage() {
         }
 
         @media (max-width: 900px) {
-          .wallet-ledger-summary-top {
-            grid-template-columns: 1fr !important;
-          }
-
-          .wallet-ledger-summary-cards {
-            justify-content: flex-start !important;
+          .ledger-summary {
+            grid-template-columns: 1fr;
+            gap: 12px;
           }
 
           .wallet-ledger-custom-dates {
@@ -734,8 +767,8 @@ export default function WalletLedgerPage() {
             align-items: stretch !important;
           }
 
-          .wallet-ledger-summary-cards {
-            flex-direction: column;
+          .ledger-figures {
+            grid-template-columns: 1fr 1fr;
           }
 
           .wallet-ledger-custom-dates {
@@ -800,173 +833,101 @@ export default function WalletLedgerPage() {
       <div className="wallet-ledger-topbar">
         <div>
           <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>{wallet.name}</h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: '15px' }}>
-            Review money in, money out, and transfer flow for this wallet.
-          </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: '8px',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              marginTop: '6px',
+              color: '#64748b',
+              fontSize: '13px',
+              fontWeight: 600,
+            }}
+          >
+            <span
+              style={{
+                ...getWalletBadgeStyle(wallet.type),
+                display: 'inline-flex',
+                alignItems: 'center',
+                padding: '2px 8px',
+                borderRadius: '999px',
+                fontSize: '11px',
+                fontWeight: 700,
+              }}
+            >
+              {wallet.type === 'ewallet'
+                ? 'E-Wallet'
+                : wallet.type.charAt(0).toUpperCase() + wallet.type.slice(1)}
+            </span>
+            {wallet.is_archived && (
+              <span
+                style={{
+                  background: '#e5e7eb',
+                  color: '#4b5563',
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                }}
+              >
+                Archived
+              </span>
+            )}
+            <span>
+              {allTimeEntryCount} {allTimeEntryCount === 1 ? 'entry' : 'entries'}
+            </span>
+          </div>
         </div>
       </div>
 
-      <section style={{ ...sectionCard, marginBottom: '16px' }}>
-        <div className="wallet-ledger-summary-top">
-          <div>
-            <div
-              style={{
-                display: 'flex',
-                gap: '10px',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                marginBottom: '10px',
-              }}
-            >
-              <span
-                style={{
-                  ...getWalletBadgeStyle(wallet.type),
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '4px 10px',
-                  borderRadius: '999px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-              >
-                {wallet.type === 'ewallet'
-                  ? 'E-Wallet'
-                  : wallet.type.charAt(0).toUpperCase() + wallet.type.slice(1)}
-              </span>
+      {/* Closing balance first, then the four figures that lead to it. */}
+      <section className="ledger-summary" style={{ ...sectionCard, marginBottom: '16px' }}>
+        <div className="ledger-summary-closing">
+          <div className="ledger-figure-label">
+            Closing · {closingLabel}
+          </div>
+          <div
+            className="ledger-summary-closing-value"
+            style={{ color: (periodBalance.closing ?? 0) >= 0 ? '#1d4ed8' : '#b91c1c' }}
+          >
+            {periodBalance.closing === null ? '–' : formatCurrency(periodBalance.closing)}
+          </div>
+        </div>
 
-              <span
-                style={{
-                  background: wallet.is_archived ? '#e5e7eb' : '#d9f99d',
-                  color: wallet.is_archived ? '#4b5563' : '#4d7c0f',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '4px 10px',
-                  borderRadius: '999px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-              >
-                {wallet.is_archived ? 'Archived' : 'Active'}
-              </span>
-            </div>
-
+        <div className="ledger-figures">
+          <div className="ledger-figure">
+            <div className="ledger-figure-label">Opening</div>
             <div
-              style={{
-                display: 'flex',
-                gap: '18px',
-                flexWrap: 'wrap',
-                color: '#475569',
-                fontSize: '13px',
-                fontWeight: 600,
-              }}
+              className="ledger-figure-value"
+              style={{ color: (periodBalance.opening ?? 0) >= 0 ? '#0f172a' : '#b91c1c' }}
             >
-              <span>{allTimeEntryCount} entries</span>
-              {wallet.created_at && <span>Created {formatDateShort(wallet.created_at)}</span>}
+              {periodBalance.opening === null ? '–' : formatCurrency(periodBalance.opening)}
             </div>
           </div>
-
-          <div className="wallet-ledger-summary-cards">
+          <div className="ledger-figure">
+            <div className="ledger-figure-label">Net flow</div>
             <div
-              style={{
-                minWidth: '150px',
-                border: '1px solid #e5e7eb',
-                borderRadius: '14px',
-                background: '#f8fafc',
-                padding: '14px 16px',
-              }}
+              className="ledger-figure-value"
+              style={{ color: summaryTotals.net >= 0 ? '#166534' : '#b91c1c' }}
             >
-              <div style={{ fontSize: '13px', color: '#475569', marginBottom: '6px', fontWeight: 700 }}>
-                Opening
-              </div>
-              <div
-                style={{
-                  fontSize: '1.15rem',
-                  fontWeight: 800,
-                  color: (periodBalance.opening ?? 0) >= 0 ? '#0f172a' : '#b91c1c',
-                }}
-              >
-                {periodBalance.opening === null ? '–' : formatCurrency(periodBalance.opening)}
-              </div>
+              {formatCurrency(summaryTotals.net)}
             </div>
-
-            <div
-              style={{
-                minWidth: '150px',
-                border: '1px solid #bbf7d0',
-                borderRadius: '14px',
-                background: '#f0fdf4',
-                padding: '14px 16px',
-              }}
-            >
-              <div style={{ fontSize: '13px', color: '#166534', marginBottom: '6px', fontWeight: 700 }}>
-                Money In
-              </div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#166534' }}>
-                {formatCurrency(summaryTotals.moneyIn)}
-              </div>
+          </div>
+          <div className="ledger-figure" style={{ background: '#f0fdf4', borderColor: '#bbf7d0' }}>
+            <div className="ledger-figure-label" style={{ color: '#166534' }}>
+              Money in
             </div>
-
-            <div
-              style={{
-                minWidth: '150px',
-                border: '1px solid #fecaca',
-                borderRadius: '14px',
-                background: '#fef2f2',
-                padding: '14px 16px',
-              }}
-            >
-              <div style={{ fontSize: '13px', color: '#b91c1c', marginBottom: '6px', fontWeight: 700 }}>
-                Money Out
-              </div>
-              <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#b91c1c' }}>
-                {formatCurrency(summaryTotals.moneyOut)}
-              </div>
+            <div className="ledger-figure-value" style={{ color: '#166534' }}>
+              {formatCurrency(summaryTotals.moneyIn)}
             </div>
-
-            <div
-              style={{
-                minWidth: '150px',
-                border: '1px solid #e5e7eb',
-                borderRadius: '14px',
-                background: '#f8fafc',
-                padding: '14px 16px',
-              }}
-            >
-              <div style={{ fontSize: '13px', color: '#475569', marginBottom: '6px', fontWeight: 700 }}>
-                Net Flow
-              </div>
-              <div
-                style={{
-                  fontSize: '1.15rem',
-                  fontWeight: 800,
-                  color: summaryTotals.net >= 0 ? '#166534' : '#b91c1c',
-                }}
-              >
-                {formatCurrency(summaryTotals.net)}
-              </div>
+          </div>
+          <div className="ledger-figure" style={{ background: '#fef2f2', borderColor: '#fecaca' }}>
+            <div className="ledger-figure-label" style={{ color: '#b91c1c' }}>
+              Money out
             </div>
-
-            <div
-              style={{
-                minWidth: '150px',
-                border: '1px solid #bfdbfe',
-                borderRadius: '14px',
-                background: '#eff6ff',
-                padding: '14px 16px',
-              }}
-            >
-              <div style={{ fontSize: '13px', color: '#1d4ed8', marginBottom: '6px', fontWeight: 700 }}>
-                Closing
-              </div>
-              <div
-                style={{
-                  fontSize: '1.15rem',
-                  fontWeight: 800,
-                  color: (periodBalance.closing ?? 0) >= 0 ? '#1d4ed8' : '#b91c1c',
-                }}
-              >
-                {periodBalance.closing === null ? '–' : formatCurrency(periodBalance.closing)}
-              </div>
+            <div className="ledger-figure-value" style={{ color: '#b91c1c' }}>
+              {formatCurrency(summaryTotals.moneyOut)}
             </div>
           </div>
         </div>
