@@ -621,7 +621,11 @@ export default function WalletsPage() {
 
       <div className="wallets-head">
         <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Wallets</h1>
-        <CurrencySwitch available={availableCurrencies} value={viewCurrency} />
+        <CurrencySwitch
+          available={availableCurrencies}
+          value={viewCurrency}
+          disabled={tab === 'archived'}
+        />
       </div>
 
       <div className="wallets-tabs">
