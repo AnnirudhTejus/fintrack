@@ -512,6 +512,11 @@ export default function WalletsPage() {
           cursor: pointer;
         }
 
+        .wallets-add-link:disabled {
+          opacity: 0.35;
+          cursor: default;
+        }
+
         .wallets-list {
           border: 1px solid #e5e7eb;
           border-radius: 14px;
@@ -645,7 +650,12 @@ export default function WalletsPage() {
         >
           Archived ({archivedWallets.length})
         </button>
-        <button type="button" className="wallets-add-link" onClick={openAddWallet}>
+        <button
+          type="button"
+          className="wallets-add-link"
+          onClick={openAddWallet}
+          disabled={tab === 'archived'}
+        >
           + Add wallet
         </button>
       </div>
