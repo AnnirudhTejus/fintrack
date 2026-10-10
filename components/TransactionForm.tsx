@@ -92,6 +92,11 @@ type Lookups = { categories: CategoryRow[]; vendors: VendorRow[]; wallets: Walle
 let lookupCache: Lookups | null = null
 let lookupRequest: Promise<Lookups> | null = null
 
+// Forget the kept lists, for example after signing out.
+export function clearTransactionLookups() {
+  lookupCache = null
+}
+
 // Downloads the lists, or reuses a download already in progress.
 // refresh = false returns the kept lists without going to the database.
 export function loadTransactionLookups(refresh = false): Promise<Lookups> {

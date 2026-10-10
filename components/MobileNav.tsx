@@ -15,6 +15,7 @@ import TransactionForm, {
   type TransactionFormValues,
 } from '@/components/TransactionForm'
 import Toast from '@/components/Toast'
+import { signOut } from '@/components/AuthGate'
 
 export const TRANSACTIONS_CHANGED_EVENT = 'fintrack:transactions-changed'
 
@@ -199,6 +200,21 @@ export default function MobileNav() {
             text-decoration: none;
           }
 
+          .mobile-nav-signout {
+            display: block;
+            width: 100%;
+            padding: 14px 20px;
+            border: none;
+            border-top: 1px solid #f1f5f9;
+            background: none;
+            text-align: left;
+            font: inherit;
+            font-size: 15px;
+            font-weight: 700;
+            color: #b91c1c;
+            cursor: pointer;
+          }
+
           .mobile-nav-sheet a:first-child {
             border-top: none;
           }
@@ -236,6 +252,16 @@ export default function MobileNav() {
         <Link href="/vendors" onClick={() => setShowMore(false)}>
           Vendors
         </Link>
+        <button
+          type="button"
+          className="mobile-nav-signout"
+          onClick={() => {
+            setShowMore(false)
+            signOut()
+          }}
+        >
+          Sign out
+        </button>
       </div>
 
       <nav className="mobile-nav" aria-label="Main">

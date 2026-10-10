@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import MobileNav from '@/components/MobileNav'
+import AuthGate from '@/components/AuthGate'
 
 export const metadata: Metadata = {
   title: 'FinTrack',
@@ -23,16 +24,18 @@ export default function RootLayout({
           fontFamily: 'Arial, sans-serif',
         }}
       >
-        <div
-          style={{
-            width: '100%',
-            minHeight: '100vh',
-            overflowX: 'hidden',
-          }}
-        >
-          {children}
-        </div>
-        <MobileNav />
+        <AuthGate>
+          <div
+            style={{
+              width: '100%',
+              minHeight: '100vh',
+              overflowX: 'hidden',
+            }}
+          >
+            {children}
+          </div>
+          <MobileNav />
+        </AuthGate>
       </body>
     </html>
   )

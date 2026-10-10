@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
+import { signOut } from '@/components/AuthGate'
 import TransactionForm, {
   TransactionFormInitialValues,
   TransactionFormValues,
@@ -983,6 +984,13 @@ export default function DashboardPage() {
           <Link href="/vendors" style={navButton}>
             Vendors
           </Link>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            style={{ ...navButton, cursor: 'pointer', color: '#b91c1c', font: 'inherit', fontWeight: 600 }}
+          >
+            Sign out
+          </button>
         </div>
       </div>
 
