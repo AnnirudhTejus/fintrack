@@ -52,6 +52,14 @@ function formatCurrency(value: number, currency: string) {
   return formatMoney(value, currency)
 }
 
+// Turns the database's duplicate-name refusal into a plain message.
+function walletSaveError(error: { code?: string; message: string }) {
+  if (error.code === '23505') {
+    return 'A wallet with this name and type already exists in this currency.'
+  }
+  return error.message
+}
+
 function todayInputValue() {
   const now = new Date()
   const year = now.getFullYear()
@@ -92,6 +100,7 @@ export default function WalletsPage() {
   const [walletCurrencyCode, setWalletCurrencyCode] = useState<CurrencyCode>(DEFAULT_CURRENCY)
 
   const [editWallet, setEditWallet] = useState<WalletRow | null>(null)
+  const [editName, setEditName] = useState('')
   const [editBalance, setEditBalance] = useState('')
   const [editDate, setEditDate] = useState('')
   const [editCurrency, setEditCurrency] = useState<CurrencyCode>(DEFAULT_CURRENCY)
@@ -245,7 +254,7 @@ export default function WalletsPage() {
     ])
 
     if (error) {
-      setErrorMessage(error.message)
+      setErrorMessage(walletSaveError(error))
       return
     }
 
@@ -261,6 +270,7 @@ export default function WalletsPage() {
 
   function openEditOpening(wallet: WalletRow) {
     setEditWallet(wallet)
+    setEditName(wallet.name)
     setEditBalance(
       wallet.opening_balance === null || wallet.opening_balance === undefined
         ? ''
@@ -274,6 +284,12 @@ export default function WalletsPage() {
   async function handleSaveOpening(e: React.FormEvent) {
     e.preventDefault()
     if (!editWallet) return
+
+    const trimmedName = editName.trim()
+    if (!trimmedName) {
+      setEditError('Wallet name is required.')
+      return
+    }
 
     const parsedOpening = parseOpeningBalance(editBalance)
     if (parsedOpening === null) {
@@ -294,6 +310,7 @@ export default function WalletsPage() {
     const { error } = await supabase
       .from('wallets')
       .update({
+        name: trimmedName,
         opening_balance: parsedOpening,
         opening_balance_date: editDate || null,
         // Currency can only change while the wallet has no transactions.
@@ -304,7 +321,7 @@ export default function WalletsPage() {
     setSavingEdit(false)
 
     if (error) {
-      setEditError(error.message)
+      setEditError(walletSaveError(error))
       return
     }
 
@@ -764,8 +781,17 @@ export default function WalletsPage() {
           >
             <div>
               <h3 style={{ margin: 0 }}>Edit wallet</h3>
-              <p style={{ fontSize: 14, color: '#555', margin: '6px 0 0' }}>{editWallet.name}</p>
             </div>
+
+            <label>
+              <span className="wallets-field-label">Wallet name</span>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
 
             <label>
               <span className="wallets-field-label">Currency</span>
