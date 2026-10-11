@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { signOut } from '@/components/AuthGate'
+import { downloadBackup } from '@/lib/backup'
 import TransactionForm, {
   TransactionFormInitialValues,
   TransactionFormValues,
@@ -988,6 +989,17 @@ export default function DashboardPage() {
           <Link href="/vendors" style={navButton}>
             Vendors
           </Link>
+          <button
+            type="button"
+            onClick={() =>
+              downloadBackup()
+                .then(({ entries }) => setSuccessMessage(`Backup saved (${entries} entries).`))
+                .catch((error: Error) => setErrorMessage(error.message))
+            }
+            style={{ ...navButton, cursor: 'pointer', font: 'inherit', fontWeight: 600 }}
+          >
+            Backup
+          </button>
           <button
             type="button"
             onClick={() => signOut()}

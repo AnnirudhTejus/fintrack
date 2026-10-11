@@ -16,6 +16,7 @@ import TransactionForm, {
 } from '@/components/TransactionForm'
 import Toast from '@/components/Toast'
 import { signOut } from '@/components/AuthGate'
+import { downloadBackup } from '@/lib/backup'
 
 export const TRANSACTIONS_CHANGED_EVENT = 'fintrack:transactions-changed'
 
@@ -72,6 +73,7 @@ export default function MobileNav() {
   const [showForm, setShowForm] = useState(false)
   const [formKey, setFormKey] = useState(0)
   const [successMessage, setSuccessMessage] = useState('')
+  const [backupError, setBackupError] = useState('')
 
   // On phones, download the form's lists early so the first tap on + is instant.
   useEffect(() => {
@@ -255,6 +257,19 @@ export default function MobileNav() {
         <button
           type="button"
           className="mobile-nav-signout"
+          style={{ color: '#111827' }}
+          onClick={() => {
+            setShowMore(false)
+            downloadBackup()
+              .then(({ entries }) => setSuccessMessage(`Backup saved (${entries} entries).`))
+              .catch((error: Error) => setBackupError(error.message))
+          }}
+        >
+          Download backup
+        </button>
+        <button
+          type="button"
+          className="mobile-nav-signout"
           onClick={() => {
             setShowMore(false)
             signOut()
@@ -349,6 +364,7 @@ export default function MobileNav() {
       )}
 
       <Toast message={successMessage} type="success" onClose={() => setSuccessMessage('')} />
+      <Toast message={backupError} type="error" onClose={() => setBackupError('')} />
     </>
   )
 }

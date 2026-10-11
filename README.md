@@ -49,6 +49,30 @@ Then open http://localhost:3000.
 - The public (`anon`) role has no access to any table. New sign-ups are switched off in both projects.
 - To change the owner account: create the new user in Supabase, then update the id in `public.is_owner()`.
 
+## Backups
+
+**Automatic, weekly (production).** `.github/workflows/backup.yml` runs every Sunday at 03:00 Malaysia time, and on demand from GitHub > Actions > Weekly database backup > Run workflow. It:
+
+1. copies the whole production database (`public` schema: tables, data, rules) with `pg_dump`;
+2. restores the copy into a throwaway database and checks the entry, wallet, category and vendor counts match the live database (the run fails if not);
+3. encrypts the copy with the `BACKUP_PASSPHRASE` (AES-256, gpg) and keeps it as an artifact for 90 days.
+
+The repository is public, so the copy is only ever stored encrypted. GitHub emails the owner if a run fails.
+
+Repository secrets (Settings > Secrets and variables > Actions):
+
+- `SUPABASE_DB_URL`: production Session pooler connection string (Supabase > Connect > Session pooler), with the database password filled in.
+- `BACKUP_PASSPHRASE`: kept in the owner's password manager. Without it the backups cannot be opened.
+
+**Manual, any time.** More > Download backup (phone) or Backup (laptop dashboard) saves `fintrack-backup-YYYY-MM-DD.json` with every table in full. For a readable list of entries, use Export CSV on Transactions.
+
+**Restoring the weekly backup** (into a new or emptied Supabase project):
+
+1. Download the artifact from the workflow run and unzip it.
+2. Decrypt: `gpg --decrypt fintrack-YYYY-MM-DD.sql.gpg > fintrack.sql` (asks for the passphrase).
+3. In the target project, remove the existing `public` tables if any, then run: `psql "<target connection string>" -f fintrack.sql`.
+4. Create the owner's account in the target project and put its id in `public.is_owner()` (see Security).
+
 ## Key rules
 
 **Wallet balances** are calculated in one place, `lib/walletBalance.ts`, and used by the dashboard, the wallets page and the wallet ledger.

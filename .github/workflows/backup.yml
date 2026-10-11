@@ -1,0 +1,95 @@
+# Weekly backup of the production database.
+#
+# Every Sunday at 3am Malaysia time (and on demand from the Actions tab), this
+# copies the whole FinTrack database (tables, data, rules) into one file,
+# locks it with a passphrase, and keeps it as a downloadable artifact for 90 days.
+#
+# The repository is public, so the file is always encrypted: without the
+# passphrase it cannot be read.
+#
+# Needs two repository secrets (Settings > Secrets and variables > Actions):
+#   SUPABASE_DB_URL     Production "Session pooler" connection string, with the
+#                       database password filled in
+#   BACKUP_PASSPHRASE   A long passphrase only the owner knows
+#
+# To restore: see "Backups" in README.md.
+
+name: Weekly database backup
+
+on:
+  schedule:
+    - cron: '0 19 * * 6' # Saturday 19:00 UTC = Sunday 03:00 Malaysia
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check secrets are set
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::SUPABASE_DB_URL and BACKUP_PASSPHRASE secrets must both be set."
+            exit 1
+          fi
+
+      - name: Copy the database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          # Same major version as the Supabase server (PostgreSQL 17).
+          docker run --rm -e DB_URL="$SUPABASE_DB_URL" postgres:17 \
+            sh -c 'pg_dump "$DB_URL" --schema=public --no-owner --no-privileges' > fintrack.sql
+          # Refuse to keep an empty or broken copy.
+          grep -q "COPY public.transaction " fintrack.sql
+          grep -q "COPY public.wallets " fintrack.sql
+          echo "Backup size: $(wc -c < fintrack.sql) bytes"
+
+      - name: Prove the copy restores (into a throwaway database)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          docker run -d --name scratch -e POSTGRES_PASSWORD=scratch postgres:17 > /dev/null
+          until docker exec scratch pg_isready -U postgres > /dev/null 2>&1; do sleep 1; done
+          sleep 2
+          # The few Supabase pieces the rules refer to.
+          docker exec -i scratch psql -U postgres -q -v ON_ERROR_STOP=1 <<'SQL'
+          create role anon nologin; create role authenticated nologin; create role service_role nologin;
+          drop schema public cascade;
+          create schema auth;
+          create function auth.uid() returns uuid language sql as 'select null::uuid';
+          SQL
+          docker exec -i scratch psql -U postgres -q -v ON_ERROR_STOP=1 < fintrack.sql
+          COUNTS="select (select count(*) from public.transaction)||','||(select count(*) from public.wallets)||','||(select count(*) from public.categories)||','||(select count(*) from public.vendors)"
+          LIVE=$(docker run --rm -e DB_URL="$SUPABASE_DB_URL" postgres:17 psql "$DB_URL" -At -c "$COUNTS")
+          RESTORED=$(docker exec scratch psql -U postgres -At -c "$COUNTS")
+          echo "Entries, wallets, categories, vendors: live $LIVE | restored $RESTORED"
+          docker rm -f scratch > /dev/null
+          if [ "$LIVE" != "$RESTORED" ]; then
+            echo "::error::Restored copy does not match the live database."
+            exit 1
+          fi
+
+      - name: Lock the copy with the passphrase
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          STAMP=$(TZ=Asia/Kuala_Lumpur date +%Y-%m-%d)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          gpg --batch --yes --pinentry-mode loopback --symmetric --cipher-algo AES256 \
+            --passphrase "$BACKUP_PASSPHRASE" -o "fintrack-$STAMP.sql.gpg" fintrack.sql
+          shred -u fintrack.sql
+
+      - name: Keep the locked copy for 90 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: fintrack-backup-${{ env.STAMP }}
+          path: fintrack-*.sql.gpg
+          retention-days: 90
+          if-no-files-found: error
