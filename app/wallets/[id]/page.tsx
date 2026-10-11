@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import { formatMoney, walletCurrency } from '@/lib/currency'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { walletPeriodSummary } from '@/lib/walletBalance'
@@ -207,12 +208,15 @@ export default function WalletLedgerPage() {
         .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date, currency')
         .eq('id', walletId)
         .maybeSingle(),
-      supabase
-        .from('transaction')
-        .select('*')
-        .or(`wallet_id.eq.${walletId},transfer_wallet_id.eq.${walletId}`)
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false }),
+      fetchAllRows(() =>
+        supabase
+          .from('transaction')
+          .select('*')
+          .or(`wallet_id.eq.${walletId},transfer_wallet_id.eq.${walletId}`)
+          .order('date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+      ),
       supabase
         .from('wallets')
         .select('id, name, type, is_archived, created_at')

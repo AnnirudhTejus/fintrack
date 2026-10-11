@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
@@ -64,7 +65,7 @@ export default function VendorsPage() {
         .select('id, name, normalized_name, is_archived, created_at')
         .order('is_archived', { ascending: true })
         .order('name', { ascending: true }),
-      supabase.from('transaction').select('vendor_id'),
+      fetchAllRows(() => supabase.from('transaction').select('vendor_id').order('id', { ascending: true })),
     ])
 
     if (vendorRes.error) {

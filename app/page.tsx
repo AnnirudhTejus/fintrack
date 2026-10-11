@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { signOut } from '@/components/AuthGate'
 import TransactionForm, {
@@ -226,11 +227,14 @@ export default function DashboardPage() {
     setErrorMessage('')
 
     const [txRes, walletRes, categoryRes, vendorRes] = await Promise.all([
-      supabase
-        .from('transaction')
-        .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false }),
+      fetchAllRows(() =>
+        supabase
+          .from('transaction')
+          .select('*')
+          .order('date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+      ),
       supabase
         .from('wallets')
         .select('id, name, type, is_archived, opening_balance, opening_balance_date, currency')

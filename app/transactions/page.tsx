@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { isDateInRange } from '@/lib/dateFilters'
 import CurrencySwitch from '@/components/CurrencySwitch'
@@ -234,11 +235,14 @@ export default function TransactionsPage() {
     setLoading(true)
 
     const [txRes, walletRes, vendorRes, categoryRes] = await Promise.all([
-      supabase
-        .from('transaction')
-        .select('*')
-        .order('date', { ascending: false })
-        .order('created_at', { ascending: false }),
+      fetchAllRows(() =>
+        supabase
+          .from('transaction')
+          .select('*')
+          .order('date', { ascending: false })
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+      ),
       supabase
         .from('wallets')
         .select('id, name, type, is_archived, currency')

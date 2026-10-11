@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
@@ -122,7 +123,12 @@ export default function WalletsPage() {
         .from('wallets')
         .select('id, name, type, is_archived, created_at, opening_balance, opening_balance_date, currency')
         .order('name', { ascending: true }),
-      supabase.from('transaction').select('type, amount, date, wallet_id, transfer_wallet_id'),
+      fetchAllRows(() =>
+        supabase
+          .from('transaction')
+          .select('type, amount, date, wallet_id, transfer_wallet_id')
+          .order('id', { ascending: true })
+      ),
     ])
 
     if (walletRes.error) {
