@@ -42,6 +42,13 @@ npm run dev
 
 Then open http://localhost:3000.
 
+## Security
+
+- The app opens only after signing in (email and password, Supabase Auth). The session is kept on the device; Sign out is in More (phone) and the dashboard top bar (laptop).
+- Every table has Row Level Security on, with one policy (`owner_only`) that allows only the owner's account, checked by the function `public.is_owner()`. Each Supabase project has its own owner account, so the account id in `is_owner()` differs between test and production.
+- The public (`anon`) role has no access to any table. New sign-ups are switched off in both projects.
+- To change the owner account: create the new user in Supabase, then update the id in `public.is_owner()`.
+
 ## Key rules
 
 **Wallet balances** are calculated in one place, `lib/walletBalance.ts`, and used by the dashboard, the wallets page and the wallet ledger.
@@ -67,4 +74,5 @@ Then open http://localhost:3000.
 |---|---|
 | Oct 2026 | `transaction_date_not_in_future` relaxed to `date <= CURRENT_DATE + 1` |
 | Oct 2026 | `wallets.opening_balance` (numeric, default 0) and `wallets.opening_balance_date` (date) added |
+| Oct 2026 | Row Level Security on all tables, `owner_only` policies via `public.is_owner()`, `anon` access revoked |
 | Oct 2026 | `wallets.currency` (text, default MYR, allowed list), triggers `wallets_currency_locked` and `transaction_same_currency_transfer`, unique wallet name per type and currency |
