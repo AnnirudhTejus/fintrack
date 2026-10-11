@@ -38,14 +38,40 @@ jobs:
             echo "::error::SUPABASE_DB_URL and BACKUP_PASSPHRASE secrets must both be set."
             exit 1
           fi
+          # Check the address's shape without ever printing it. Stray spaces or
+          # line breaks from pasting are ignored.
+          URL=$(printf '%s' "$SUPABASE_DB_URL" | tr -d '[:space:]')
+          case "$URL" in
+            https://*|http://*)
+              echo "::error::SUPABASE_DB_URL is a website address (https://...). It must be the database address starting with postgresql:// (Supabase > Connect > Connection string > Session pooler)."
+              exit 1 ;;
+            postgresql://*|postgres://*) ;;
+            *)
+              echo "::error::SUPABASE_DB_URL does not start with postgresql:// . Copy it from Supabase > Connect > Connection string > Session pooler."
+              exit 1 ;;
+          esac
+          case "$URL" in
+            *YOUR-PASSWORD*|*\[*|*\]*)
+              echo "::error::SUPABASE_DB_URL still contains [YOUR-PASSWORD] or square brackets. Replace [YOUR-PASSWORD], brackets included, with the database password."
+              exit 1 ;;
+          esac
+          case "$URL" in
+            *pooler.supabase.com*) ;;
+            *)
+              echo "::error::SUPABASE_DB_URL is not the Session pooler address (it should contain pooler.supabase.com). GitHub cannot reach the direct address."
+              exit 1 ;;
+          esac
+          echo "Database address looks right."
+
 
       - name: Copy the database
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           # Same major version as the Supabase server (PostgreSQL 17).
-          docker run --rm -e DB_URL="$SUPABASE_DB_URL" postgres:17 \
-            sh -c 'pg_dump "$DB_URL" --schema=public --no-owner --no-privileges' > fintrack.sql
+          URL=$(printf '%s' "$SUPABASE_DB_URL" | tr -d '[:space:]')
+          docker run --rm -e DB_URL="$URL" --entrypoint sh postgres:17 \
+            -c 'pg_dump --dbname="$DB_URL" --schema=public --no-owner --no-privileges' > fintrack.sql
           # Refuse to keep an empty or broken copy.
           grep -q "COPY public.transaction " fintrack.sql
           grep -q "COPY public.wallets " fintrack.sql
@@ -67,7 +93,9 @@ jobs:
           SQL
           docker exec -i scratch psql -U postgres -q -v ON_ERROR_STOP=1 < fintrack.sql
           COUNTS="select (select count(*) from public.transaction)||','||(select count(*) from public.wallets)||','||(select count(*) from public.categories)||','||(select count(*) from public.vendors)"
-          LIVE=$(docker run --rm -e DB_URL="$SUPABASE_DB_URL" postgres:17 psql "$DB_URL" -At -c "$COUNTS")
+          URL=$(printf '%s' "$SUPABASE_DB_URL" | tr -d '[:space:]')
+          LIVE=$(docker run --rm -e DB_URL="$URL" -e COUNTS="$COUNTS" --entrypoint sh postgres:17 \
+            -c 'psql --dbname="$DB_URL" -At -c "$COUNTS"')
           RESTORED=$(docker exec scratch psql -U postgres -At -c "$COUNTS")
           echo "Entries, wallets, categories, vendors: live $LIVE | restored $RESTORED"
           docker rm -f scratch > /dev/null
