@@ -92,6 +92,15 @@ Repository secrets (Settings > Secrets and variables > Actions):
 - Transfers must be between wallets of the same currency (database trigger `transaction_same_currency_transfer`). An Exchange must be between different currencies (same trigger).
 - The same wallet name can exist once per currency and type (for example Wise in RM, ₹ and $).
 
+**Vendors** each have a home category (`vendors.category_id`).
+
+- Every vendor typed on an entry is on the Vendors page; a new name is added on purpose with "+ Add" in the form, taking the entry's category as its home.
+- The form lists the chosen category's vendors (from past entries and home categories) first; picking a vendor first fills in its category from its last entry of that type, else its home category.
+- Entries keep their own category. Editing a vendor can move its entries from other categories of the same type (expense to expense) to its home category; it never moves entries across types.
+- Merge moves all of one vendor's entries to another and deletes the duplicate.
+- A category's type is locked once it has entries. Renaming a category also updates the category name stored on its entries.
+- Archived vendors, categories and wallets: only Restore (and viewing) works.
+
 **Transaction dates** cannot be in the future. The app checks against the device's local date. The database rule (`transaction_date_not_in_future`) allows up to its own date plus one day, because the database runs on UTC and Malaysia is 8 hours ahead.
 
 ## Database changes
