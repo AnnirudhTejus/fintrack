@@ -72,7 +72,8 @@ export default function VendorsPage() {
   const [sheet, setSheet] = useState<SheetState>(null)
   const [formName, setFormName] = useState('')
   const [formCategoryId, setFormCategoryId] = useState('')
-  const [moveEntries, setMoveEntries] = useState(false)
+  // Categories (other than the home one) whose entries for this vendor should move to the home category.
+  const [moveFrom, setMoveFrom] = useState<number[]>([])
   const [mergeTargetId, setMergeTargetId] = useState('')
   const [sheetError, setSheetError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -220,7 +221,7 @@ export default function VendorsPage() {
     setSheet({ kind: 'add' })
     setFormName('')
     setFormCategoryId('')
-    setMoveEntries(false)
+    setMoveFrom([])
     setSheetError('')
   }
 
@@ -228,7 +229,7 @@ export default function VendorsPage() {
     setSheet({ kind: 'edit', vendor })
     setFormName(vendor.name)
     setFormCategoryId(vendor.category_id ? String(vendor.category_id) : '')
-    setMoveEntries(false)
+    setMoveFrom([])
     setSheetError('')
   }
 
@@ -243,18 +244,24 @@ export default function VendorsPage() {
     setSheet(null)
   }
 
-  // Editing: what moving past entries would mean for the chosen new home category.
-  const editMove = useMemo(() => {
+  // Editing: this vendor's entries in categories other than the chosen home
+  // category. Same-type ones can be moved to the home category; others stay.
+  const editOthers = useMemo(() => {
     if (sheet?.kind !== 'edit') return null
-    const oldId = sheet.vendor.category_id || null
-    const newId = formCategoryId ? Number(formCategoryId) : null
-    if (!oldId || !newId || oldId === newId) return null
-    const count = usageByVendor[sheet.vendor.id]?.byCategory[oldId] || 0
-    if (count === 0) return null
-    const from = categoryById[oldId]
-    const to = categoryById[newId]
-    if (!from || !to) return null
-    return { count, from, to, sameType: from.type_id === to.type_id }
+    const home = formCategoryId ? categoryById[Number(formCategoryId)] : null
+    if (!home) return null
+    const byCategory = usageByVendor[sheet.vendor.id]?.byCategory || {}
+    const others = Object.keys(byCategory)
+      .map(Number)
+      .filter((id) => id !== home.id && categoryById[id])
+      .map((id) => ({ category: categoryById[id], count: byCategory[id] }))
+      .sort((a, b) => b.count - a.count)
+    if (others.length === 0) return null
+    return {
+      home,
+      movable: others.filter((other) => other.category.type_id === home.type_id),
+      fixed: others.filter((other) => other.category.type_id !== home.type_id),
+    }
   }, [sheet, formCategoryId, usageByVendor, categoryById])
 
   async function handleSaveVendor(e: React.FormEvent) {
@@ -317,26 +324,30 @@ export default function VendorsPage() {
     }
 
     let moved = 0
-    if (moveEntries && editMove?.sameType) {
+    const toMove = (editOthers?.movable || []).filter((other) => moveFrom.includes(other.category.id))
+    if (toMove.length > 0 && editOthers) {
       const { error: moveError } = await supabase
         .from('transaction')
-        .update({ category_id: editMove.to.id, category: editMove.to.name })
+        .update({ category_id: editOthers.home.id, category: editOthers.home.name })
         .eq('vendor_id', vendor.id)
-        .eq('category_id', editMove.from.id)
+        .in(
+          'category_id',
+          toMove.map((other) => other.category.id)
+        )
       if (moveError) {
         setSaving(false)
         setSheetError(`Vendor saved, but its entries could not be moved: ${moveError.message}`)
         await fetchData()
         return
       }
-      moved = editMove.count
+      moved = toMove.reduce((sum, other) => sum + other.count, 0)
     }
 
     setSaving(false)
     setSheet(null)
     setSuccessMessage(
       moved > 0
-        ? `${name} saved. ${moved === 1 ? '1 entry' : `${moved} entries`} moved to ${editMove?.to.name}.`
+        ? `${name} saved. ${moved === 1 ? '1 entry' : `${moved} entries`} moved to ${editOthers?.home.name}.`
         : `${name} saved.`
     )
     await fetchData()
@@ -470,7 +481,7 @@ export default function VendorsPage() {
       value={formCategoryId}
       onChange={(e) => {
         setFormCategoryId(e.target.value)
-        setMoveEntries(false)
+        setMoveFrom([])
       }}
       aria-label="Home category"
       style={inputStyle}
@@ -653,6 +664,23 @@ export default function VendorsPage() {
           cursor: pointer;
         }
 
+        .vendors-fixed {
+          margin-top: 10px;
+          color: #64748b;
+          font-size: 13px;
+        }
+
+        .vendor-link {
+          display: block;
+          min-width: 0;
+          color: inherit;
+          text-decoration: none;
+        }
+
+        .vendor-link:hover .vendor-name {
+          color: #2563eb;
+        }
+
         .vendors-note {
           margin-top: 12px;
           padding: 10px 12px;
@@ -753,14 +781,18 @@ export default function VendorsPage() {
               const isWorking = workingId === vendor.id
               return (
                 <div key={vendor.id} className="vendor-row">
-                  <div style={{ minWidth: 0 }}>
+                  <Link
+                    href={`/transactions?vendor=${vendor.id}`}
+                    className="vendor-link"
+                    aria-label={`See entries for ${vendor.name}`}
+                  >
                     <div className="vendor-name">{vendor.name}</div>
                     <div className="vendor-meta">
                       {groupMode === 'az' && <>{home || 'No category'} · </>}
                       {uses > 0 ? (uses === 1 ? '1 entry' : `${uses} entries`) : 'Not used yet'}
                       {also.length > 0 && <span className="vendor-also"> · Also used in {also.join(', ')}</span>}
                     </div>
-                  </div>
+                  </Link>
                   <RowActionsMenu
                     items={[
                       { label: 'Edit', onClick: () => openEdit(vendor), disabled: isWorking },
@@ -867,27 +899,38 @@ export default function VendorsPage() {
                 </label>
                 <div id="vendor-home">{categorySelect}</div>
 
-                {editMove &&
-                  (editMove.sameType ? (
-                    <label className="vendors-check">
-                      <input
-                        type="checkbox"
-                        checked={moveEntries}
-                        onChange={(e) => setMoveEntries(e.target.checked)}
-                        style={{ width: '18px', height: '18px', margin: 0, flex: 'none' }}
-                      />
-                      <span>
-                        Also move its <b>{editMove.count === 1 ? '1 entry' : `${editMove.count} entries`}</b> from{' '}
-                        {editMove.from.name} to {editMove.to.name}
-                      </span>
-                    </label>
-                  ) : (
-                    <div className="vendors-note" style={{ background: '#f8fafc', color: '#475569' }}>
-                      Its {editMove.count === 1 ? '1 entry stays' : `${editMove.count} entries stay`} in{' '}
-                      {editMove.from.name}, because that is {TYPE_LABELS[editMove.from.type_id]?.toLowerCase()} and{' '}
-                      {editMove.to.name} is {TYPE_LABELS[editMove.to.type_id]?.toLowerCase()}.
-                    </div>
-                  ))}
+                {editOthers && (
+                  <div style={{ marginTop: '14px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: '#374151' }}>Also used in</div>
+                    {editOthers.movable.map((other) => (
+                      <label key={other.category.id} className="vendors-check">
+                        <input
+                          type="checkbox"
+                          checked={moveFrom.includes(other.category.id)}
+                          onChange={(e) =>
+                            setMoveFrom((current) =>
+                              e.target.checked
+                                ? [...current, other.category.id]
+                                : current.filter((id) => id !== other.category.id)
+                            )
+                          }
+                          style={{ width: '18px', height: '18px', margin: 0, flex: 'none' }}
+                        />
+                        <span>
+                          {other.category.name} ({other.count === 1 ? '1 entry' : `${other.count} entries`}) → move to{' '}
+                          <b>{editOthers.home.name}</b>
+                        </span>
+                      </label>
+                    ))}
+                    {editOthers.fixed.map((other) => (
+                      <div key={other.category.id} className="vendors-fixed">
+                        {other.category.name} ({other.count === 1 ? '1 entry' : `${other.count} entries`}) stays: it is{' '}
+                        {TYPE_LABELS[other.category.type_id]?.toLowerCase()}, {editOthers.home.name} is{' '}
+                        {TYPE_LABELS[editOthers.home.type_id]?.toLowerCase()}.
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {sheetError && (
                   <div style={{ marginTop: '10px', color: '#b91c1c', fontSize: '13px', fontWeight: 600 }}>{sheetError}</div>

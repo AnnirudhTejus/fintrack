@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
@@ -203,7 +204,19 @@ function getCsvDirection(item: DisplayTransaction) {
   return 'Out'
 }
 
+// Reading the address (?vendor=ID) needs a Suspense boundary in this Next.js version.
 export default function TransactionsPage() {
+  return (
+    <Suspense fallback={null}>
+      <TransactionsPageContent />
+    </Suspense>
+  )
+}
+
+function TransactionsPageContent() {
+  // Set when arriving from the Vendors page (/transactions?vendor=ID).
+  const vendorParam = useSearchParams().get('vendor')
+
   const [transactions, setTransactions] = useState<TransactionRow[]>([])
   const [wallets, setWallets] = useState<WalletRow[]>([])
   const [vendors, setVendors] = useState<VendorRow[]>([])
@@ -217,11 +230,17 @@ export default function TransactionsPage() {
   const [filterCategoryId, setFilterCategoryId] = useState<string>('All')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterWalletId, setFilterWalletId] = useState<string>('All')
+  const [filterVendorId, setFilterVendorId] = useState<string | null>(vendorParam)
 
-  const [period, setPeriod] = useState<Period>('all_time')
+  // Opens on This Month; from a vendor's link, on All Time for that vendor.
+  const [period, setPeriod] = useState<Period>(() => (vendorParam ? 'all_time' : 'month'))
   const [monthOffset, setMonthOffset] = useState(0)
-  const [filterDateFrom, setFilterDateFrom] = useState('')
-  const [filterDateTo, setFilterDateTo] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState(() =>
+    vendorParam ? '' : rangeForPeriod('month', 0).from
+  )
+  const [filterDateTo, setFilterDateTo] = useState(() =>
+    vendorParam ? '' : rangeForPeriod('month', 0).to
+  )
 
   const [showMobileFilters, setShowMobileFilters] = useState(false)
 
@@ -300,6 +319,11 @@ export default function TransactionsPage() {
   useEffect(() => {
     fetchData()
   }, [])
+
+  function clearVendorFilter() {
+    setFilterVendorId(null)
+    window.history.replaceState(null, '', '/transactions')
+  }
 
   // Reload when a transaction is added from the bottom bar's + button.
   useEffect(() => {
@@ -506,8 +530,9 @@ export default function TransactionsPage() {
 
       const searchMatch = normalizedQuery === '' ? true : searchableText.includes(normalizedQuery)
       const dateMatch = isDateInRange(item.date, filterDateFrom, filterDateTo)
+      const vendorMatch = !filterVendorId || String(item.vendor_id ?? '') === filterVendorId
 
-      return typeMatch && categoryMatch && walletMatch && searchMatch && dateMatch
+      return typeMatch && categoryMatch && walletMatch && searchMatch && dateMatch && vendorMatch
     })
   }, [
     displayTransactions,
@@ -515,6 +540,7 @@ export default function TransactionsPage() {
     viewCurrency,
     filterType,
     filterCategoryId,
+    filterVendorId,
     activeWalletFilter,
     searchQuery,
     filterDateFrom,
@@ -616,6 +642,11 @@ export default function TransactionsPage() {
   const summaryContextParts = useMemo(() => {
     const parts: string[] = []
 
+    if (filterVendorId) {
+      const vendorName = vendorMap[Number(filterVendorId)]?.name
+      if (vendorName) parts.push(vendorName)
+    }
+
     if (activeWalletFilter !== 'All') {
       const wallet = wallets.find((item) => String(item.id) === activeWalletFilter)
       if (wallet) parts.push(wallet.name)
@@ -651,6 +682,8 @@ export default function TransactionsPage() {
 
     return parts
   }, [
+    filterVendorId,
+    vendorMap,
     activeWalletFilter,
     wallets,
     filterCategoryId,
@@ -664,16 +697,26 @@ export default function TransactionsPage() {
 
   const summaryLine = useMemo(() => {
     const countText = `${filteredTransactions.length} ${filteredTransactions.length === 1 ? 'transaction' : 'transactions'}`
-    const amountText =
-      filterType === 'All'
-        ? `${formatMoney(filteredGrandTotal, viewCurrency)} total`
-        : formatMoney(filteredGrandTotal, viewCurrency)
-
-    const base = `${summaryTitle} · ${amountText} · ${countText}`
+    let base: string
+    if (filterType === 'All') {
+      // Adding every type together means nothing, so show money in and money spent.
+      const totalIn = filteredTransactions
+        .filter((item) => item.type === 'Income')
+        .reduce((sum, item) => sum + item.amount, 0)
+      const totalSpent = filteredTransactions
+        .filter((item) => item.type === 'Expense')
+        .reduce((sum, item) => sum + item.amount, 0)
+      const parts: string[] = []
+      if (totalIn > 0) parts.push(`In ${formatMoney(totalIn, viewCurrency)}`)
+      if (totalSpent > 0) parts.push(`Spent ${formatMoney(totalSpent, viewCurrency)}`)
+      base = [...parts, countText].join(' · ')
+    } else {
+      base = `${summaryTitle} · ${formatMoney(filteredGrandTotal, viewCurrency)} · ${countText}`
+    }
 
     if (summaryContextParts.length === 0) return base
     return `${base} · ${summaryContextParts.join(' · ')}`
-  }, [filteredTransactions.length, filteredGrandTotal, filterType, summaryTitle, summaryContextParts, viewCurrency])
+  }, [filteredTransactions, filteredGrandTotal, filterType, summaryTitle, summaryContextParts, viewCurrency])
 
   function handlePeriodChange(next: Period) {
     setPeriod(next)
@@ -706,10 +749,12 @@ export default function TransactionsPage() {
     setFilterCategoryId('All')
     setSearchQuery('')
     setFilterWalletId('All')
-    setPeriod('all_time')
+    clearVendorFilter()
+    setPeriod('month')
     setMonthOffset(0)
-    setFilterDateFrom('')
-    setFilterDateTo('')
+    const range = rangeForPeriod('month', 0)
+    setFilterDateFrom(range.from)
+    setFilterDateTo(range.to)
   }
 
   const resetFormState = () => {
@@ -961,6 +1006,33 @@ export default function TransactionsPage() {
           grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr);
           gap: 10px;
           margin-bottom: 10px;
+        }
+
+        .tx-vendor-chip-row {
+          margin-bottom: 10px;
+        }
+
+        .tx-vendor-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 6px 6px 12px;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: #1d4ed8;
+          font-size: 14px;
+          font-weight: 700;
+        }
+
+        .tx-vendor-chip button {
+          width: 24px;
+          height: 24px;
+          border: none;
+          border-radius: 999px;
+          background: #dbeafe;
+          color: #1d4ed8;
+          font-weight: 800;
+          cursor: pointer;
         }
 
         .tx-filters-grid {
@@ -1252,6 +1324,17 @@ export default function TransactionsPage() {
           padding: '12px',
         }}
       >
+        {filterVendorId && (
+          <div className="tx-vendor-chip-row">
+            <span className="tx-vendor-chip">
+              Vendor: {vendorMap[Number(filterVendorId)]?.name || '…'}
+              <button type="button" onClick={clearVendorFilter} aria-label="Show all vendors">
+                ✕
+              </button>
+            </span>
+          </div>
+        )}
+
         <div className="tx-quick-date-row">
           <PeriodFilter
             period={period}
