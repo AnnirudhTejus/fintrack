@@ -1115,7 +1115,7 @@ export default function WalletLedgerPage() {
                       return (
                         <TxRow
                           key={row.id}
-                          className="wallet-ledger-row"
+                          className="ledger-txr"
                           title={text.title}
                           subtitle={text.subtitle}
                           dotColor={getTypeDotColor(row.type)}

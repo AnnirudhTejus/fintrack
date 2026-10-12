@@ -1423,7 +1423,7 @@ export default function DashboardPage() {
             {recentTransactions.map((tx) => (
               <TxRow
                 key={tx.id}
-                className="recent-tx-row"
+                className="recent-txr"
                 title={tx.title}
                 subtitle={tx.subtitle}
                 dotColor={getTypeDotColor(tx.type)}
