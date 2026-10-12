@@ -79,6 +79,7 @@ Repository secrets (Settings > Secrets and variables > Actions):
 
 - Balance = opening balance + income - expense - investment + transfers in - transfers out + exchanges in (amount received) - exchanges out (amount sent).
 - **Exchange** moves money between two of the owner's wallets in different currencies (for example Maybank RM to ICICI ₹). It stores the amount sent (`amount`, in the source wallet's currency) and the amount received (`received_amount`, in the destination's currency); the rate is worked out from the two. It is not income or spending. Sending money to someone else is an Expense.
+- In the app both kinds appear as one choice, **Wallet transfer**: the form saves an Exchange when the two wallets' currencies differ, otherwise a Transfer. Lists and filters show both as Transfer; the CSV keeps the Exchange label. Transfers can be edited like any entry.
 - A wallet's opening balance is "as at end of" an optional date. Transactions after that date are added to it. Within the month of that date the balance is worked back to the 1st. Earlier months have no known balance and show a dash.
 - A wallet with no opening date starts from its opening balance at its first transaction. Months before that show a dash.
 - Money in and money out always show what actually moved in a period.
@@ -88,7 +89,7 @@ Repository secrets (Settings > Secrets and variables > Actions):
 - Totals never mix currencies. Dashboard and Transactions show one currency at a time, chosen with the switch next to the title. The choice is remembered on the device and shared by both pages. The switch only appears when wallets exist in two or more currencies.
 - Rupee amounts use Indian grouping (1,25,000.00).
 - A wallet's currency cannot change once it has transactions (database trigger `wallets_currency_locked`).
-- Transfers must be between wallets of the same currency (database trigger `transaction_same_currency_transfer`). Moving money between currencies (Exchange) is planned.
+- Transfers must be between wallets of the same currency (database trigger `transaction_same_currency_transfer`). An Exchange must be between different currencies (same trigger).
 - The same wallet name can exist once per currency and type (for example Wise in RM, ₹ and $).
 
 **Transaction dates** cannot be in the future. The app checks against the device's local date. The database rule (`transaction_date_not_in_future`) allows up to its own date plus one day, because the database runs on UTC and Malaysia is 8 hours ahead.
