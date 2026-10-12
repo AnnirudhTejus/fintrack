@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import WalletPicker from '@/components/WalletPicker'
 import { currenciesInUse, currencyInfo, useViewCurrency, walletCurrency } from '@/lib/currency'
 
@@ -22,7 +23,21 @@ type VendorRow = {
   name: string
   normalized_name?: string | null
   is_archived?: boolean
+  // Home category: used for a vendor's first entry and to list it under a category.
+  category_id?: number | null
 }
+
+// How each vendor has been used, worked out from past entries.
+type VendorUsage = {
+  // "vendorId:categoryId" -> number of entries
+  byCategory: Record<string, number>
+  // vendorId -> number of entries
+  total: Record<number, number>
+  // vendorId -> category of the most recent entry
+  lastCategory: Record<number, number>
+}
+
+const EMPTY_USAGE: VendorUsage = { byCategory: {}, total: {}, lastCategory: {} }
 
 type WalletRow = {
   id: number
@@ -80,6 +95,51 @@ function normalizeVendorName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+// Letters and digits only, so "AL-Andalus" and "Al Andalus" compare equal.
+function vendorKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+function editDistance(a: string, b: string) {
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i]
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      )
+    }
+    previous = current
+  }
+  return previous[b.length]
+}
+
+// Close enough to be the same vendor spelt differently ("Jaya Grocers" vs "Jaya Grocer").
+function looksLikeSameVendor(typed: string, existing: string) {
+  const a = vendorKey(typed)
+  const b = vendorKey(existing)
+  if (!a || !b) return false
+  if (a === b) return true
+  const allowed = Math.max(1, Math.floor(Math.min(a.length, b.length) / 5))
+  return Math.abs(a.length - b.length) <= allowed && editDistance(a, b) <= allowed
+}
+
+function buildVendorUsage(rows: { vendor_id: number | null; category_id: number | null }[]): VendorUsage {
+  const usage: VendorUsage = { byCategory: {}, total: {}, lastCategory: {} }
+  // Rows arrive oldest first, so the last category seen is the most recent one.
+  for (const row of rows) {
+    if (!row.vendor_id) continue
+    usage.total[row.vendor_id] = (usage.total[row.vendor_id] || 0) + 1
+    if (!row.category_id) continue
+    const key = `${row.vendor_id}:${row.category_id}`
+    usage.byCategory[key] = (usage.byCategory[key] || 0) + 1
+    usage.lastCategory[row.vendor_id] = row.category_id
+  }
+  return usage
+}
+
 function todayInputValue() {
   const now = new Date()
   const year = now.getFullYear()
@@ -90,7 +150,12 @@ function todayInputValue() {
 
 // The categories, vendors and wallets lists are kept here once downloaded, so
 // opening the form again does not wait on the database.
-type Lookups = { categories: CategoryRow[]; vendors: VendorRow[]; wallets: WalletRow[] }
+type Lookups = {
+  categories: CategoryRow[]
+  vendors: VendorRow[]
+  wallets: WalletRow[]
+  usage: VendorUsage
+}
 
 let lookupCache: Lookups | null = null
 let lookupRequest: Promise<Lookups> | null = null
@@ -115,23 +180,33 @@ export function loadTransactionLookups(refresh = false): Promise<Lookups> {
       .order('name', { ascending: true }),
     supabase
       .from('vendors')
-      .select('id, name, normalized_name, is_archived')
+      .select('id, name, normalized_name, is_archived, category_id')
       .order('name', { ascending: true }),
     supabase
       .from('wallets')
       .select('id, name, type, is_archived, currency')
       .order('name', { ascending: true }),
+    fetchAllRows<{ vendor_id: number | null; category_id: number | null }>(() =>
+      supabase
+        .from('transaction')
+        .select('vendor_id, category_id')
+        .not('vendor_id', 'is', null)
+        .order('date', { ascending: true })
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+    ),
   ])
-    .then(([categoryRes, vendorRes, walletRes]) => {
+    .then(([categoryRes, vendorRes, walletRes, usageRes]) => {
       // If one list fails, keep the last good copy of it.
       lookupCache = {
         categories: categoryRes.error ? lookupCache?.categories || [] : (categoryRes.data as CategoryRow[]) || [],
         vendors: vendorRes.error ? lookupCache?.vendors || [] : (vendorRes.data as VendorRow[]) || [],
         wallets: walletRes.error ? lookupCache?.wallets || [] : (walletRes.data as WalletRow[]) || [],
+        usage: usageRes.error ? lookupCache?.usage || EMPTY_USAGE : buildVendorUsage(usageRes.data),
       }
       return lookupCache
     })
-    .catch(() => lookupCache || { categories: [], vendors: [], wallets: [] })
+    .catch(() => lookupCache || { categories: [], vendors: [], wallets: [], usage: EMPTY_USAGE })
     .finally(() => {
       lookupRequest = null
     })
@@ -151,6 +226,7 @@ export default function TransactionForm({
   const [categories, setCategories] = useState<CategoryRow[]>(lookupCache?.categories || [])
   const [vendors, setVendors] = useState<VendorRow[]>(lookupCache?.vendors || [])
   const [wallets, setWallets] = useState<WalletRow[]>(lookupCache?.wallets || [])
+  const [vendorUsage, setVendorUsage] = useState<VendorUsage>(lookupCache?.usage || EMPTY_USAGE)
   const [loading, setLoading] = useState(lookupCache === null)
 
   const [type, setType] = useState<FormTransactionType>(initialValues?.type || 'Expense')
@@ -161,6 +237,11 @@ export default function TransactionForm({
   )
   // Suggestions show only while the user is typing in the vendor box.
   const [showVendorSuggestions, setShowVendorSuggestions] = useState(false)
+  const [showOtherVendors, setShowOtherVendors] = useState(false)
+  // The typed name was confirmed with "+ Add as a new vendor".
+  const [addNewVendor, setAddNewVendor] = useState(false)
+  // Name of the vendor the category was filled in from, if any.
+  const [categoryFilledFrom, setCategoryFilledFrom] = useState<string | null>(null)
   const vendorFieldRef = useRef<HTMLDivElement | null>(null)
   const [walletId, setWalletId] = useState<string>(
     initialValues?.wallet_id ? String(initialValues.wallet_id) : ''
@@ -187,6 +268,7 @@ export default function TransactionForm({
       setCategories(lookups.categories)
       setVendors(lookups.vendors)
       setWallets(lookups.wallets)
+      setVendorUsage(lookups.usage)
       setLoading(false)
     })
     return () => {
@@ -263,15 +345,71 @@ export default function TransactionForm({
     }
   }, [showVendorSuggestions])
 
-  const vendorSuggestions = useMemo(() => {
-    const query = vendorInput.trim().toLowerCase()
-    if (!query) return []
+  // The vendor list: the chosen category's vendors first (most used first),
+  // then every other vendor. Typing searches all of them.
+  const vendorLists = useMemo(() => {
+    const active = vendors.filter((vendor) => vendor.is_archived !== true)
+    const usedIn = (vendor: VendorRow) =>
+      categoryId ? vendorUsage.byCategory[`${vendor.id}:${categoryId}`] || 0 : 0
+    const totalUses = (vendor: VendorRow) => vendorUsage.total[vendor.id] || 0
+    const byUse = (a: VendorRow, b: VendorRow) => totalUses(b) - totalUses(a) || a.name.localeCompare(b.name)
 
-    return vendors
-      .filter((vendor) => vendor.is_archived !== true)
-      .filter((vendor) => vendor.name.toLowerCase().includes(query))
-      .slice(0, 8)
-  }, [vendors, vendorInput])
+    const inCategory = categoryId
+      ? active
+          .filter((vendor) => usedIn(vendor) > 0 || String(vendor.category_id ?? '') === categoryId)
+          .sort((a, b) => usedIn(b) - usedIn(a) || a.name.localeCompare(b.name))
+      : []
+    const inCategoryIds = new Set(inCategory.map((vendor) => vendor.id))
+    const others = active.filter((vendor) => !inCategoryIds.has(vendor.id)).sort(byUse)
+
+    const query = normalizeVendorName(vendorInput)
+    const exact = query
+      ? active.find((vendor) => (vendor.normalized_name || normalizeVendorName(vendor.name)) === query)
+      : undefined
+    const matches = query
+      ? [...inCategory, ...others]
+          .filter((vendor) => vendor.name.toLowerCase().includes(query))
+          .slice(0, 8)
+      : []
+    const lookAlikes =
+      query && !exact
+        ? active
+            .filter((vendor) => !matches.includes(vendor) && looksLikeSameVendor(query, vendor.name))
+            .sort(byUse)
+            .slice(0, 2)
+        : []
+
+    return { inCategory, inCategoryIds, others, query, exact, matches, lookAlikes, usedIn }
+  }, [vendors, vendorUsage, categoryId, vendorInput])
+
+  const categoryNameById = useMemo(() => {
+    const names: Record<string, string> = {}
+    categories.forEach((category) => {
+      names[String(category.id)] = category.name
+    })
+    return names
+  }, [categories])
+
+  function pickVendor(vendor: VendorRow) {
+    setVendorInput(vendor.name)
+    setSelectedVendorId(vendor.id)
+    setAddNewVendor(false)
+    setShowVendorSuggestions(false)
+    setShowOtherVendors(false)
+
+    // Vendor picked first: fill in the category from the last entry with this
+    // vendor, or its home category, when it fits the chosen type.
+    if (!categoryId) {
+      const fits = (id?: number | null) =>
+        !!id && categoryOptions.some((category) => category.id === id)
+      const last = vendorUsage.lastCategory[vendor.id]
+      const fill = fits(last) ? last : fits(vendor.category_id) ? vendor.category_id : null
+      if (fill) {
+        setCategoryId(String(fill))
+        setCategoryFilledFrom(vendor.name)
+      }
+    }
+  }
 
   // "Wallet transfer" moves money between two of your wallets: no category or vendor.
   // You never pick Transfer or Exchange: if the two wallets use different
@@ -366,8 +504,9 @@ export default function TransactionForm({
     const trimmedVendor = vendorInput.trim()
     const trimmedNote = note.trim()
 
-    let vendorIdToUse: number | null = selectedVendorId
+    let vendorIdToUse: number | null = trimmedVendor ? selectedVendorId : null
     let vendorTextToUse: string | null = trimmedVendor || null
+    let createVendor = false
 
     if (!isTransfer && trimmedVendor) {
       const normalized = normalizeVendorName(trimmedVendor)
@@ -380,6 +519,13 @@ export default function TransactionForm({
       if (existingVendor) {
         vendorIdToUse = existingVendor.id
         vendorTextToUse = existingVendor.name
+      } else if (addNewVendor) {
+        createVendor = true
+      } else {
+        // Every entry's vendor is on the Vendors page; a new name is added on purpose.
+        setErrorMessage(`Pick a vendor from the list, or tap "+ Add" to save "${trimmedVendor}" as a new vendor.`)
+        setShowVendorSuggestions(true)
+        return
       }
     }
 
@@ -404,6 +550,41 @@ export default function TransactionForm({
 
     try {
       setSaving(true)
+
+      if (createVendor && vendorTextToUse) {
+        const normalized = normalizeVendorName(vendorTextToUse)
+        const { data: created, error: createError } = await supabase
+          .from('vendors')
+          .insert([{ name: vendorTextToUse, normalized_name: normalized, category_id: Number(categoryId) }])
+          .select('id, name, normalized_name, is_archived, category_id')
+          .single()
+
+        let vendorRow = created as VendorRow | null
+        if (createError) {
+          // Already added (for example from another device): use that one.
+          const { data: found } = await supabase
+            .from('vendors')
+            .select('id, name, normalized_name, is_archived, category_id')
+            .eq('normalized_name', normalized)
+            .limit(1)
+            .maybeSingle()
+          if (!found) throw new Error(`Could not add vendor: ${createError.message}`)
+          vendorRow = found as VendorRow
+        }
+
+        if (vendorRow) {
+          payload.vendor_id = vendorRow.id
+          payload.vendor = vendorRow.name
+          const added = vendorRow
+          setVendors((current) => (current.some((v) => v.id === added.id) ? current : [...current, added]))
+          setSelectedVendorId(added.id)
+          setAddNewVendor(false)
+          if (lookupCache && !lookupCache.vendors.some((v) => v.id === added.id)) {
+            lookupCache = { ...lookupCache, vendors: [...lookupCache.vendors, added] }
+          }
+        }
+      }
+
       await onSubmit(payload)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save transaction.'
@@ -469,11 +650,70 @@ export default function TransactionForm({
           margin-top: 6px;
           border: 1px solid #e5e7eb;
           border-radius: 10px;
-          overflow: hidden;
+          max-height: 300px;
+          overflow-y: auto;
           background: #fff;
         }
 
+        .transaction-form-vendor-heading {
+          padding: 8px 12px 4px;
+          background: #f8fafc;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .transaction-form-vendor-empty {
+          padding: 10px 12px;
+          color: #64748b;
+          font-size: 13px;
+        }
+
+        .transaction-form-vendor-meta {
+          color: #94a3b8;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+
+        .transaction-form-vendor-item.is-add {
+          color: #2563eb;
+          font-weight: 700;
+        }
+
+        .transaction-form-vendor-item.is-lookalike {
+          background: #fffbeb;
+          color: #92400e;
+          font-weight: 600;
+        }
+
+        .transaction-form-vendor-item.is-more {
+          color: #475569;
+          font-weight: 700;
+        }
+
+        .transaction-form-vendor-new {
+          margin-top: 6px;
+          color: #2563eb;
+          font-size: 12px;
+          font-weight: 600;
+        }
+
+        .transaction-form-filled-tag {
+          margin-left: 8px;
+          padding: 1px 6px;
+          border-radius: 6px;
+          background: #f0fdfa;
+          color: #0f766e;
+          font-size: 11px;
+          font-weight: 700;
+        }
+
         .transaction-form-vendor-item {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
           width: 100%;
           padding: 10px 12px;
           border: none;
@@ -529,10 +769,18 @@ export default function TransactionForm({
           {!isTransfer ? (
             <div className="transaction-form-row-two" style={rowTwo}>
               <div>
-                <label style={labelStyle}>Category</label>
+                <label style={labelStyle}>
+                  Category
+                  {categoryFilledFrom && (
+                    <span className="transaction-form-filled-tag">from {categoryFilledFrom}</span>
+                  )}
+                </label>
                 <select
                   value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
+                  onChange={(e) => {
+                    setCategoryId(e.target.value)
+                    setCategoryFilledFrom(null)
+                  }}
                   style={inputStyle}
                 >
                   <option value="">Select category</option>
@@ -560,32 +808,129 @@ export default function TransactionForm({
                   onChange={(e) => {
                     setVendorInput(e.target.value)
                     setSelectedVendorId(null)
+                    setAddNewVendor(false)
                     setShowVendorSuggestions(true)
                   }}
+                  onFocus={() => setShowVendorSuggestions(true)}
+                  onClick={() => setShowVendorSuggestions(true)}
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') setShowVendorSuggestions(false)
                   }}
-                  placeholder="Vendor name"
+                  placeholder="Search or pick a vendor"
+                  aria-label="Vendor"
                   autoComplete="off"
                   style={inputStyle}
                 />
 
-                {showVendorSuggestions && vendorSuggestions.length > 0 && (
-                  <div className="transaction-form-vendor-suggestions">
-                    {vendorSuggestions.map((vendor) => (
-                      <button
-                        key={vendor.id}
-                        type="button"
-                        className="transaction-form-vendor-item"
-                        onClick={() => {
-                          setVendorInput(vendor.name)
-                          setSelectedVendorId(vendor.id)
-                          setShowVendorSuggestions(false)
-                        }}
-                      >
-                        {vendor.name}
-                      </button>
-                    ))}
+                {addNewVendor && !showVendorSuggestions && (
+                  <div className="transaction-form-vendor-new">
+                    New vendor. It will be added to your Vendors page when you save.
+                  </div>
+                )}
+
+                {showVendorSuggestions && (
+                  <div className="transaction-form-vendor-suggestions" role="listbox" aria-label="Vendors">
+                    {vendorLists.query ? (
+                      <>
+                        {vendorLists.lookAlikes.map((vendor) => (
+                          <button
+                            key={`like-${vendor.id}`}
+                            type="button"
+                            className="transaction-form-vendor-item is-lookalike"
+                            onClick={() => pickVendor(vendor)}
+                          >
+                            Did you mean {vendor.name}?
+                          </button>
+                        ))}
+                        {vendorLists.matches.map((vendor) => (
+                          <button
+                            key={vendor.id}
+                            type="button"
+                            className="transaction-form-vendor-item"
+                            onClick={() => pickVendor(vendor)}
+                          >
+                            <span>{vendor.name}</span>
+                            <span className="transaction-form-vendor-meta">
+                              {vendor.category_id ? categoryNameById[String(vendor.category_id)] || '' : ''}
+                            </span>
+                          </button>
+                        ))}
+                        {!vendorLists.exact && (
+                          <button
+                            type="button"
+                            className="transaction-form-vendor-item is-add"
+                            onClick={() => {
+                              setVendorInput(vendorInput.trim().replace(/\s+/g, ' '))
+                              setAddNewVendor(true)
+                              setSelectedVendorId(null)
+                              setShowVendorSuggestions(false)
+                            }}
+                          >
+                            + Add &ldquo;{vendorInput.trim()}&rdquo; as a new vendor
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {categoryId && (
+                          <>
+                            <div className="transaction-form-vendor-heading">
+                              {categoryNameById[categoryId] || 'This category'}
+                            </div>
+                            {vendorLists.inCategory.length === 0 && (
+                              <div className="transaction-form-vendor-empty">
+                                No vendors here yet. Type a name to add one.
+                              </div>
+                            )}
+                            {vendorLists.inCategory.map((vendor) => (
+                              <button
+                                key={vendor.id}
+                                type="button"
+                                className="transaction-form-vendor-item"
+                                onClick={() => pickVendor(vendor)}
+                              >
+                                <span>{vendor.name}</span>
+                                <span className="transaction-form-vendor-meta">
+                                  {vendorLists.usedIn(vendor) || ''}
+                                </span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        {categoryId && !showOtherVendors ? (
+                          vendorLists.others.length > 0 && (
+                            <button
+                              type="button"
+                              className="transaction-form-vendor-item is-more"
+                              onClick={() => setShowOtherVendors(true)}
+                            >
+                              Other vendors ({vendorLists.others.length}) ▸
+                            </button>
+                          )
+                        ) : (
+                          <>
+                            {vendorLists.others.length > 0 && (
+                              <div className="transaction-form-vendor-heading">
+                                {categoryId ? 'Other vendors' : 'Vendors'}
+                              </div>
+                            )}
+                            {vendorLists.others.map((vendor) => (
+                              <button
+                                key={vendor.id}
+                                type="button"
+                                className="transaction-form-vendor-item"
+                                onClick={() => pickVendor(vendor)}
+                              >
+                                <span>{vendor.name}</span>
+                                <span className="transaction-form-vendor-meta">
+                                  {vendor.category_id ? categoryNameById[String(vendor.category_id)] || '' : ''}
+                                </span>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
