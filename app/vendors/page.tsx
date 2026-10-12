@@ -1,5 +1,12 @@
 'use client'
 
+// Vendors: grouped by home category (or A to Z), with add, edit (name and home
+// category), merge, archive and delete.
+//
+// A vendor's home category decides where it is listed here and what the Add
+// Transaction form fills in the first time it is used. Entries keep their own
+// category; editing the home category moves past entries only when asked.
+
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -13,34 +20,46 @@ type VendorRow = {
   name: string
   normalized_name?: string | null
   is_archived?: boolean
-  created_at?: string
+  category_id?: number | null
 }
 
-type TransactionUsageRow = {
-  vendor_id: number | null
+type CategoryRow = {
+  id: number
+  name: string
+  type_id: number
+  is_archived?: boolean
+  is_active?: boolean
 }
 
-type VendorWithUsage = VendorRow & {
-  usage_count?: number
-}
+type UsageRow = { vendor_id: number | null; category_id: number | null }
 
-function formatDate(dateString?: string) {
-  if (!dateString) return ''
-  const date = new Date(dateString)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
-}
+type GroupMode = 'category' | 'az'
+
+type SheetState =
+  | { kind: 'add' }
+  | { kind: 'edit'; vendor: VendorRow }
+  | { kind: 'merge'; vendor: VendorRow }
+  | null
+
+const GROUP_MODE_KEY = 'fintrack:vendors-group'
+const TYPE_LABELS: Record<number, string> = { 1: 'Expense', 2: 'Income', 3: 'Investment' }
 
 function normalizeVendorName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
+function readGroupMode(): GroupMode {
+  try {
+    return window.localStorage.getItem(GROUP_MODE_KEY) === 'az' ? 'az' : 'category'
+  } catch {
+    return 'category'
+  }
+}
+
 export default function VendorsPage() {
-  const [vendors, setVendors] = useState<VendorWithUsage[]>([])
+  const [vendors, setVendors] = useState<VendorRow[]>([])
+  const [categories, setCategories] = useState<CategoryRow[]>([])
+  const [usage, setUsage] = useState<UsageRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const [errorMessage, setErrorMessage] = useState('')
@@ -48,24 +67,52 @@ export default function VendorsPage() {
 
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active')
   const [search, setSearch] = useState('')
+  const [groupMode, setGroupMode] = useState<GroupMode>('category')
 
-  const [newVendorName, setNewVendorName] = useState('')
+  const [sheet, setSheet] = useState<SheetState>(null)
+  const [formName, setFormName] = useState('')
+  const [formCategoryId, setFormCategoryId] = useState('')
+  const [moveEntries, setMoveEntries] = useState(false)
+  const [mergeTargetId, setMergeTargetId] = useState('')
+  const [sheetError, setSheetError] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [editingName, setEditingName] = useState('')
   const [workingId, setWorkingId] = useState<number | null>(null)
-  const [deleteVendor, setDeleteVendor] = useState<VendorWithUsage | null>(null)
+  const [deleteVendor, setDeleteVendor] = useState<VendorRow | null>(null)
+
+  useEffect(() => {
+    setGroupMode(readGroupMode())
+  }, [])
+
+  function changeGroupMode(next: GroupMode) {
+    setGroupMode(next)
+    try {
+      window.localStorage.setItem(GROUP_MODE_KEY, next)
+    } catch {
+      // Not remembered on this device; still works.
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
 
-    const [vendorRes, txRes] = await Promise.all([
+    const [vendorRes, categoryRes, usageRes] = await Promise.all([
       supabase
         .from('vendors')
-        .select('id, name, normalized_name, is_archived, created_at')
-        .order('is_archived', { ascending: true })
+        .select('id, name, normalized_name, is_archived, category_id')
         .order('name', { ascending: true }),
-      fetchAllRows(() => supabase.from('transaction').select('vendor_id').order('id', { ascending: true })),
+      supabase
+        .from('categories')
+        .select('id, name, type_id, is_archived, is_active')
+        .order('type_id', { ascending: true })
+        .order('name', { ascending: true }),
+      fetchAllRows<UsageRow>(() =>
+        supabase
+          .from('transaction')
+          .select('vendor_id, category_id')
+          .not('vendor_id', 'is', null)
+          .order('id', { ascending: true })
+      ),
     ])
 
     if (vendorRes.error) {
@@ -75,21 +122,9 @@ export default function VendorsPage() {
       return
     }
 
-    const usageRows = (txRes.data as TransactionUsageRow[]) || []
-    const usageMap: Record<number, number> = {}
-
-    usageRows.forEach((row) => {
-      if (row.vendor_id) {
-        usageMap[row.vendor_id] = (usageMap[row.vendor_id] || 0) + 1
-      }
-    })
-
-    const vendorRows = ((vendorRes.data as VendorRow[]) || []).map((vendor) => ({
-      ...vendor,
-      usage_count: usageMap[vendor.id] || 0,
-    }))
-
-    setVendors(vendorRows)
+    setVendors((vendorRes.data as VendorRow[]) || [])
+    setCategories((categoryRes.data as CategoryRow[]) || [])
+    setUsage(usageRes.data || [])
     setLoading(false)
   }
 
@@ -97,161 +132,264 @@ export default function VendorsPage() {
     fetchData()
   }, [])
 
-  const filteredVendors = useMemo(() => {
-    const query = search.trim().toLowerCase()
+  const categoryById = useMemo(() => {
+    const map: Record<number, CategoryRow> = {}
+    categories.forEach((category) => {
+      map[category.id] = category
+    })
+    return map
+  }, [categories])
 
+  // vendorId -> { total, byCategory: categoryId -> count }
+  const usageByVendor = useMemo(() => {
+    const map: Record<number, { total: number; byCategory: Record<number, number> }> = {}
+    usage.forEach((row) => {
+      if (!row.vendor_id) return
+      const entry = (map[row.vendor_id] ||= { total: 0, byCategory: {} })
+      entry.total += 1
+      if (row.category_id) entry.byCategory[row.category_id] = (entry.byCategory[row.category_id] || 0) + 1
+    })
+    return map
+  }, [usage])
+
+  const usesOf = (vendor: VendorRow) => usageByVendor[vendor.id]?.total || 0
+
+  const alsoUsedIn = (vendor: VendorRow) => {
+    const byCategory = usageByVendor[vendor.id]?.byCategory || {}
+    return Object.keys(byCategory)
+      .map(Number)
+      .filter((id) => id !== vendor.category_id)
+      .sort((a, b) => byCategory[b] - byCategory[a])
+      .map((id) => categoryById[id]?.name)
+      .filter(Boolean) as string[]
+  }
+
+  const tabVendors = useMemo(() => {
+    const query = search.trim().toLowerCase()
     return vendors
-      .filter((vendor) =>
-        activeTab === 'active' ? vendor.is_archived !== true : vendor.is_archived === true
-      )
-      .filter((vendor) => {
-        if (!query) return true
-        return vendor.name.toLowerCase().includes(query)
-      })
+      .filter((vendor) => (activeTab === 'active' ? vendor.is_archived !== true : vendor.is_archived === true))
+      .filter((vendor) => !query || vendor.name.toLowerCase().includes(query))
   }, [vendors, activeTab, search])
 
-  const activeCount = useMemo(
-    () => vendors.filter((vendor) => vendor.is_archived !== true).length,
-    [vendors]
-  )
+  const groups = useMemo(() => {
+    const byUse = (a: VendorRow, b: VendorRow) =>
+      (usageByVendor[b.id]?.total || 0) - (usageByVendor[a.id]?.total || 0) || a.name.localeCompare(b.name)
 
-  const archivedCount = useMemo(
-    () => vendors.filter((vendor) => vendor.is_archived === true).length,
-    [vendors]
-  )
-
-  const handleCreateVendor = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    const trimmedName = newVendorName.trim()
-    if (!trimmedName) {
-      setErrorMessage('Vendor name is required.')
-      return
-    }
-
-    const normalized = normalizeVendorName(trimmedName)
-    const exists = vendors.some(
-      (vendor) => (vendor.normalized_name || normalizeVendorName(vendor.name)) === normalized
-    )
-
-    if (exists) {
-      setErrorMessage('Vendor already exists.')
-      return
-    }
-
-    setErrorMessage('')
-    setSuccessMessage('')
-
-    const { error } = await supabase.from('vendors').insert([
-      {
-        name: trimmedName,
-        normalized_name: normalized,
-        is_archived: false,
-      },
-    ])
-
-    if (error) {
-      setErrorMessage(error.message)
-      return
-    }
-
-    setSuccessMessage('Vendor added successfully.')
-    setNewVendorName('')
-    await fetchData()
-  }
-
-  const startRename = (vendor: VendorWithUsage) => {
-    setEditingId(vendor.id)
-    setEditingName(vendor.name)
-    setErrorMessage('')
-    setSuccessMessage('')
-  }
-
-  const cancelRename = () => {
-    setEditingId(null)
-    setEditingName('')
-  }
-
-  const handleRename = async (vendorId: number) => {
-    const trimmedName = editingName.trim()
-    if (!trimmedName) {
-      setErrorMessage('Vendor name cannot be empty.')
-      return
-    }
-
-    const normalized = normalizeVendorName(trimmedName)
-    const exists = vendors.some(
-      (vendor) =>
-        vendor.id !== vendorId &&
-        (vendor.normalized_name || normalizeVendorName(vendor.name)) === normalized
-    )
-
-    if (exists) {
-      setErrorMessage('Another vendor already uses this name.')
-      return
-    }
-
-    setWorkingId(vendorId)
-    setErrorMessage('')
-    setSuccessMessage('')
-
-    const { error } = await supabase
-      .from('vendors')
-      .update({
-        name: trimmedName,
-        normalized_name: normalized,
+    if (groupMode === 'az') {
+      const map: Record<string, VendorRow[]> = {}
+      tabVendors.forEach((vendor) => {
+        const first = vendor.name.trim().charAt(0).toUpperCase()
+        const key = /[A-Z]/.test(first) ? first : '#'
+        ;(map[key] ||= []).push(vendor)
       })
-      .eq('id', vendorId)
+      return Object.keys(map)
+        .sort((a, b) => (a === '#' ? 1 : b === '#' ? -1 : a.localeCompare(b)))
+        .map((key) => ({
+          key,
+          title: key,
+          vendors: map[key].sort((a, b) => a.name.localeCompare(b.name)),
+        }))
+    }
 
-    setWorkingId(null)
+    const map: Record<string, VendorRow[]> = {}
+    tabVendors.forEach((vendor) => {
+      const key = vendor.category_id && categoryById[vendor.category_id] ? String(vendor.category_id) : 'none'
+      ;(map[key] ||= []).push(vendor)
+    })
+    const ordered = categories.filter((category) => map[String(category.id)])
+    return [
+      ...ordered.map((category) => ({
+        key: String(category.id),
+        title: category.name,
+        vendors: map[String(category.id)].sort(byUse),
+      })),
+      ...(map.none ? [{ key: 'none', title: 'No category', vendors: map.none.sort(byUse) }] : []),
+    ]
+  }, [tabVendors, groupMode, categories, categoryById, usageByVendor])
 
-    if (error) {
-      setErrorMessage(error.message)
+  const activeCount = vendors.filter((vendor) => vendor.is_archived !== true).length
+  const archivedCount = vendors.length - activeCount
+
+  const pickableCategories = categories.filter(
+    (category) => category.is_archived !== true && category.is_active !== false
+  )
+
+  // ---- sheet: add / edit / merge ----
+
+  function openAdd() {
+    setSheet({ kind: 'add' })
+    setFormName('')
+    setFormCategoryId('')
+    setMoveEntries(false)
+    setSheetError('')
+  }
+
+  function openEdit(vendor: VendorRow) {
+    setSheet({ kind: 'edit', vendor })
+    setFormName(vendor.name)
+    setFormCategoryId(vendor.category_id ? String(vendor.category_id) : '')
+    setMoveEntries(false)
+    setSheetError('')
+  }
+
+  function openMerge(vendor: VendorRow) {
+    setSheet({ kind: 'merge', vendor })
+    setMergeTargetId('')
+    setSheetError('')
+  }
+
+  function closeSheet() {
+    if (saving) return
+    setSheet(null)
+  }
+
+  // Editing: what moving past entries would mean for the chosen new home category.
+  const editMove = useMemo(() => {
+    if (sheet?.kind !== 'edit') return null
+    const oldId = sheet.vendor.category_id || null
+    const newId = formCategoryId ? Number(formCategoryId) : null
+    if (!oldId || !newId || oldId === newId) return null
+    const count = usageByVendor[sheet.vendor.id]?.byCategory[oldId] || 0
+    if (count === 0) return null
+    const from = categoryById[oldId]
+    const to = categoryById[newId]
+    if (!from || !to) return null
+    return { count, from, to, sameType: from.type_id === to.type_id }
+  }, [sheet, formCategoryId, usageByVendor, categoryById])
+
+  async function handleSaveVendor(e: React.FormEvent) {
+    e.preventDefault()
+    if (!sheet || sheet.kind === 'merge') return
+
+    const name = formName.trim().replace(/\s+/g, ' ')
+    if (!name) {
+      setSheetError('Enter a vendor name.')
+      return
+    }
+    if (!formCategoryId) {
+      setSheetError('Choose a home category.')
       return
     }
 
-    setSuccessMessage('Vendor renamed successfully.')
-    cancelRename()
-    await fetchData()
-  }
+    const normalized = normalizeVendorName(name)
+    const editingId = sheet.kind === 'edit' ? sheet.vendor.id : null
+    const clash = vendors.find(
+      (vendor) =>
+        vendor.id !== editingId && (vendor.normalized_name || normalizeVendorName(vendor.name)) === normalized
+    )
+    if (clash) {
+      setSheetError(
+        `"${clash.name}" already exists${clash.is_archived ? ' (archived)' : ''}. ` +
+          (sheet.kind === 'edit' ? 'To combine them, use Merge.' : 'Use that one instead.')
+      )
+      return
+    }
 
-  const handleArchiveToggle = async (vendor: VendorWithUsage) => {
-    setWorkingId(vendor.id)
-    setErrorMessage('')
-    setSuccessMessage('')
+    setSaving(true)
+    setSheetError('')
+    const categoryId = Number(formCategoryId)
 
+    if (sheet.kind === 'add') {
+      const { error } = await supabase
+        .from('vendors')
+        .insert([{ name, normalized_name: normalized, category_id: categoryId, is_archived: false }])
+      setSaving(false)
+      if (error) {
+        setSheetError(error.message)
+        return
+      }
+      setSheet(null)
+      setSuccessMessage(`${name} added.`)
+      await fetchData()
+      return
+    }
+
+    const vendor = sheet.vendor
     const { error } = await supabase
       .from('vendors')
-      .update({ is_archived: vendor.is_archived !== true ? true : false })
+      .update({ name, normalized_name: normalized, category_id: categoryId })
       .eq('id', vendor.id)
 
-    setWorkingId(null)
-
     if (error) {
-      setErrorMessage(error.message)
+      setSaving(false)
+      setSheetError(error.message)
       return
     }
 
+    let moved = 0
+    if (moveEntries && editMove?.sameType) {
+      const { error: moveError } = await supabase
+        .from('transaction')
+        .update({ category_id: editMove.to.id, category: editMove.to.name })
+        .eq('vendor_id', vendor.id)
+        .eq('category_id', editMove.from.id)
+      if (moveError) {
+        setSaving(false)
+        setSheetError(`Vendor saved, but its entries could not be moved: ${moveError.message}`)
+        await fetchData()
+        return
+      }
+      moved = editMove.count
+    }
+
+    setSaving(false)
+    setSheet(null)
     setSuccessMessage(
-      vendor.is_archived === true
-        ? 'Vendor restored successfully.'
-        : 'Vendor archived successfully.'
+      moved > 0
+        ? `${name} saved. ${moved === 1 ? '1 entry' : `${moved} entries`} moved to ${editMove?.to.name}.`
+        : `${name} saved.`
     )
     await fetchData()
   }
 
-  const handleDelete = async (vendor: VendorWithUsage) => {
-    if ((vendor.usage_count || 0) > 0) {
-      setErrorMessage('Used vendors cannot be deleted. Archive them instead.')
+  const mergeCandidates = useMemo(() => {
+    if (sheet?.kind !== 'merge') return []
+    return vendors
+      .filter((vendor) => vendor.id !== sheet.vendor.id && vendor.is_archived !== true)
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [sheet, vendors])
+
+  async function handleMerge() {
+    if (sheet?.kind !== 'merge') return
+    const from = sheet.vendor
+    const keep = vendors.find((vendor) => String(vendor.id) === mergeTargetId)
+    if (!keep) {
+      setSheetError('Choose the vendor to keep.')
       return
     }
 
+    setSaving(true)
+    setSheetError('')
+
+    const { error: moveError } = await supabase
+      .from('transaction')
+      .update({ vendor_id: keep.id, vendor: keep.name })
+      .eq('vendor_id', from.id)
+
+    if (moveError) {
+      setSaving(false)
+      setSheetError(moveError.message)
+      return
+    }
+
+    const { error: deleteError } = await supabase.from('vendors').delete().eq('id', from.id)
+    if (deleteError) {
+      // Entries already moved; hide the old name instead.
+      await supabase.from('vendors').update({ is_archived: true }).eq('id', from.id)
+    }
+
+    setSaving(false)
+    setSheet(null)
+    setSuccessMessage(`Merged "${from.name}" into ${keep.name}.`)
+    await fetchData()
+  }
+
+  const handleArchiveToggle = async (vendor: VendorRow) => {
     setWorkingId(vendor.id)
-    setErrorMessage('')
-    setSuccessMessage('')
-
-    const { error } = await supabase.from('vendors').delete().eq('id', vendor.id)
-
+    const { error } = await supabase
+      .from('vendors')
+      .update({ is_archived: vendor.is_archived !== true })
+      .eq('id', vendor.id)
     setWorkingId(null)
 
     if (error) {
@@ -259,31 +397,34 @@ export default function VendorsPage() {
       return
     }
 
-    if (editingId === vendor.id) {
-      cancelRename()
-    }
-
-    setSuccessMessage('Vendor deleted successfully.')
+    setSuccessMessage(vendor.is_archived === true ? `${vendor.name} restored.` : `${vendor.name} archived.`)
     await fetchData()
   }
 
-  const pageWrap: CSSProperties = {
-    maxWidth: '1100px',
-    margin: '0 auto',
-    padding: '16px',
-    fontFamily: 'Arial, sans-serif',
+  const handleDelete = async (vendor: VendorRow) => {
+    if (usesOf(vendor) > 0) {
+      setErrorMessage('Vendors with entries cannot be deleted. Archive or merge them instead.')
+      return
+    }
+
+    setWorkingId(vendor.id)
+    const { error } = await supabase.from('vendors').delete().eq('id', vendor.id)
+    setWorkingId(null)
+
+    if (error) {
+      setErrorMessage(error.message)
+      return
+    }
+
+    setSuccessMessage(`${vendor.name} deleted.`)
+    await fetchData()
   }
 
-  const card: CSSProperties = {
-    border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    background: '#fff',
-    padding: '16px',
-  }
+  // ---- styles ----
 
   const inputStyle: CSSProperties = {
     width: '100%',
-    height: '48px',
+    height: '44px',
     padding: '0 12px',
     borderRadius: '10px',
     border: '1px solid #d1d5db',
@@ -292,9 +433,17 @@ export default function VendorsPage() {
     boxSizing: 'border-box',
   }
 
+  const labelStyle: CSSProperties = {
+    display: 'block',
+    fontSize: '13px',
+    fontWeight: 700,
+    color: '#374151',
+    margin: '12px 0 6px',
+  }
+
   const buttonPrimary: CSSProperties = {
-    height: '48px',
-    padding: '0 14px',
+    height: '44px',
+    padding: '0 16px',
     borderRadius: '10px',
     border: '1px solid #0f172a',
     background: '#0f172a',
@@ -302,15 +451,11 @@ export default function VendorsPage() {
     cursor: 'pointer',
     fontWeight: 700,
     fontSize: '14px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
   }
 
   const buttonSecondary: CSSProperties = {
-    height: '48px',
-    padding: '0 14px',
+    height: '44px',
+    padding: '0 16px',
     borderRadius: '10px',
     border: '1px solid #d1d5db',
     background: '#fff',
@@ -318,370 +463,458 @@ export default function VendorsPage() {
     cursor: 'pointer',
     fontWeight: 600,
     fontSize: '14px',
-    textDecoration: 'none',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
   }
 
-  const tabButton = (active: boolean): CSSProperties => ({
-    height: '48px',
-    padding: '0 18px',
-    borderRadius: '999px',
-    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-    background: active ? '#2563eb' : '#fff',
-    color: active ? '#fff' : '#111827',
-    fontWeight: 700,
-    fontSize: '14px',
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-  })
+  const categorySelect = (
+    <select
+      value={formCategoryId}
+      onChange={(e) => {
+        setFormCategoryId(e.target.value)
+        setMoveEntries(false)
+      }}
+      aria-label="Home category"
+      style={inputStyle}
+    >
+      <option value="">Choose a category</option>
+      {[1, 2, 3].map((typeId) => {
+        const options = pickableCategories.filter((category) => category.type_id === typeId)
+        if (options.length === 0) return null
+        return (
+          <optgroup key={typeId} label={TYPE_LABELS[typeId]}>
+            {options.map((category) => (
+              <option key={category.id} value={String(category.id)}>
+                {category.name}
+              </option>
+            ))}
+          </optgroup>
+        )
+      })}
+    </select>
+  )
+
+  const mergeFrom = sheet?.kind === 'merge' ? sheet.vendor : null
+  const mergeKeep = mergeCandidates.find((vendor) => String(vendor.id) === mergeTargetId)
+  const mergeCount = mergeFrom ? usesOf(mergeFrom) : 0
 
   return (
-    <main style={pageWrap}>
+    <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '16px', fontFamily: 'Arial, sans-serif' }}>
       <style>{`
-        .vendor-create-form {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          gap: 10px;
-          align-items: end;
+        .vendors-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 12px;
         }
 
-        .vendor-search-card {
-          padding: 12px;
+        .vendors-add {
+          height: 40px;
+          padding: 0 16px;
+          border-radius: 999px;
+          border: none;
+          background: #2563eb;
+          color: #fff;
+          font-weight: 800;
+          font-size: 14px;
+          cursor: pointer;
+        }
+
+        .vendors-bar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin: 10px 2px 12px;
+        }
+
+        .vendors-tabs {
+          display: flex;
+          gap: 16px;
+        }
+
+        .vendors-tab {
+          padding: 4px 0;
+          border: none;
+          border-bottom: 2px solid transparent;
+          background: none;
+          color: #64748b;
+          font: inherit;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .vendors-tab.is-on {
+          color: #2563eb;
+          border-bottom-color: #2563eb;
+        }
+
+        .vendors-switch {
+          display: inline-flex;
+          border: 1px solid #d1d5db;
+          border-radius: 999px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .vendors-switch button {
+          padding: 6px 12px;
+          border: none;
+          background: none;
+          color: #475569;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .vendors-switch button.is-on {
+          background: #0f172a;
+          color: #fff;
+        }
+
+        .vendors-group {
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #fff;
+          overflow: visible;
+          margin-bottom: 12px;
+        }
+
+        .vendors-group-title {
+          padding: 8px 16px;
+          background: #f1f5f9;
+          border-radius: 14px 14px 0 0;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
         }
 
         .vendor-row {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
           gap: 12px;
-          align-items: start;
-          padding: 12px 16px;
+          align-items: center;
+          padding: 10px 16px;
+          border-top: 1px solid #f1f5f9;
+        }
+
+        .vendor-name {
+          color: #111827;
+          font-weight: 700;
+          font-size: 14px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .vendor-meta {
-          margin-top: 4px;
+          margin-top: 3px;
+          color: #64748b;
           font-size: 12px;
-          color: #4b5563;
+        }
+
+        .vendor-also {
+          color: #0f766e;
+        }
+
+        .vendors-sheet-shade {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          background: rgba(15, 23, 42, 0.45);
+        }
+
+        .vendors-sheet {
+          width: 100%;
+          max-width: 440px;
+          max-height: 90vh;
+          overflow: auto;
+          box-sizing: border-box;
+          padding: 18px 16px;
+          border-radius: 16px;
+          background: #fff;
+        }
+
+        .vendors-check {
           display: flex;
           gap: 10px;
-          flex-wrap: wrap;
+          align-items: flex-start;
+          margin-top: 12px;
+          color: #374151;
+          font-size: 13px;
+          cursor: pointer;
         }
 
-        .vendor-row-actions .ram-trigger {
-          opacity: 0;
-          transition: opacity 0.15s ease;
-        }
-
-        .vendor-row:hover .vendor-row-actions .ram-trigger,
-        .vendor-row:focus-within .vendor-row-actions .ram-trigger {
-          opacity: 1;
+        .vendors-note {
+          margin-top: 12px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          font-size: 13px;
         }
 
         @media (max-width: 640px) {
-          .vendor-page-header {
-            flex-direction: column;
-            align-items: stretch !important;
+          .vendors-sheet-shade {
+            align-items: flex-end;
+            padding: 0;
           }
 
-          .vendor-create-form {
-            grid-template-columns: 1fr !important;
-          }
-
-          .vendor-row {
-            grid-template-columns: 1fr auto !important;
-          }
-
-          .vendor-row-actions {
-            justify-self: end;
-            align-self: start;
-          }
-
-          .vendor-row-actions .ram-trigger {
-            opacity: 1 !important;
-          }
-
-          .vendor-edit-row {
-            flex-direction: column;
-            align-items: stretch !important;
-          }
-
-          .vendor-edit-row input {
-            max-width: none !important;
+          .vendors-sheet {
+            max-width: none;
+            border-radius: 18px 18px 0 0;
+            padding-bottom: calc(18px + env(safe-area-inset-bottom));
           }
         }
       `}</style>
 
       <div className="hide-on-phone" style={{ marginBottom: '16px' }}>
-        <Link
-          href="/"
-          style={{
-            color: '#2563eb',
-            textDecoration: 'none',
-            fontWeight: 600,
-            fontSize: '14px',
-          }}
-        >
+        <Link href="/" style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>
           ← Back to Dashboard
         </Link>
       </div>
 
-      <div
-        className="vendor-page-header"
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: '12px',
-          flexWrap: 'wrap',
-          marginBottom: '16px',
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Vendors</h1>
-          <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: '15px' }}>
-            Manage merchant and payee names used in transactions.
-          </p>
-        </div>
-      </div>
-
-      <section style={{ ...card, marginBottom: '16px' }}>
-        <h2
-          style={{
-            marginTop: 0,
-            marginBottom: '14px',
-            fontSize: '0.95rem',
-            letterSpacing: '0.04em',
-            color: '#6b7280',
-            textTransform: 'uppercase',
-          }}
-        >
-          Add New Vendor
-        </h2>
-
-        <form className="vendor-create-form" onSubmit={handleCreateVendor}>
-          <input
-            type="text"
-            placeholder="Vendor name (e.g. Grab, Jaya Grocers)"
-            value={newVendorName}
-            onChange={(e) => setNewVendorName(e.target.value)}
-            style={inputStyle}
-          />
-
-          <button type="submit" style={buttonPrimary}>
-            Add Vendor
-          </button>
-        </form>
-      </section>
-
-      <div
-        style={{
-          display: 'flex',
-          gap: '10px',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          marginBottom: '14px',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setActiveTab('active')}
-          style={tabButton(activeTab === 'active')}
-        >
-          Active ({activeCount})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('archived')}
-          style={tabButton(activeTab === 'archived')}
-        >
-          Archived ({archivedCount})
+      <div className="vendors-top">
+        <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Vendors</h1>
+        <button type="button" className="vendors-add" onClick={openAdd}>
+          + Add
         </button>
       </div>
 
-      <section style={{ ...card, marginBottom: '12px' }} className="vendor-search-card">
-        <input
-          type="text"
-          placeholder="Search vendors..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={inputStyle}
-        />
-      </section>
+      <input
+        type="text"
+        placeholder="Search vendors"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        aria-label="Search vendors"
+        style={inputStyle}
+      />
 
-      <section style={{ ...card, padding: 0, overflow: 'hidden' }}>
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #f3f4f6',
-            fontSize: '14px',
-            color: '#6b7280',
-            fontWeight: 600,
-          }}
-        >
-          {loading
-            ? 'Loading vendors...'
-            : `${filteredVendors.length} vendor${filteredVendors.length === 1 ? '' : 's'}`}
-        </div>
-
-        {loading ? null : filteredVendors.length === 0 ? (
-          <div
-            style={{
-              padding: '16px',
-              color: '#6b7280',
-              fontSize: '14px',
-            }}
+      <div className="vendors-bar">
+        <div className="vendors-tabs">
+          <button
+            type="button"
+            className={`vendors-tab${activeTab === 'active' ? ' is-on' : ''}`}
+            onClick={() => setActiveTab('active')}
           >
-            No vendors found.
-          </div>
-        ) : (
-          <div>
-            {filteredVendors.map((vendor, index) => {
-              const usageCount = vendor.usage_count || 0
-              const isEditing = editingId === vendor.id
+            Active ({activeCount})
+          </button>
+          <button
+            type="button"
+            className={`vendors-tab${activeTab === 'archived' ? ' is-on' : ''}`}
+            onClick={() => setActiveTab('archived')}
+          >
+            Archived ({archivedCount})
+          </button>
+        </div>
+
+        <div className="vendors-switch" role="group" aria-label="Group vendors by">
+          <button
+            type="button"
+            className={groupMode === 'category' ? 'is-on' : ''}
+            aria-pressed={groupMode === 'category'}
+            onClick={() => changeGroupMode('category')}
+          >
+            Category
+          </button>
+          <button
+            type="button"
+            className={groupMode === 'az' ? 'is-on' : ''}
+            aria-pressed={groupMode === 'az'}
+            onClick={() => changeGroupMode('az')}
+          >
+            A–Z
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ color: '#64748b', fontSize: '14px', padding: '8px 2px' }}>Loading vendors...</div>
+      ) : groups.length === 0 ? (
+        <div style={{ color: '#64748b', fontSize: '14px', padding: '8px 2px' }}>
+          {search.trim() ? 'No vendors match your search.' : 'No vendors here.'}
+        </div>
+      ) : (
+        groups.map((group) => (
+          <section key={group.key} className="vendors-group" aria-label={group.title}>
+            <div className="vendors-group-title">
+              {group.title} · {group.vendors.length}
+            </div>
+            {group.vendors.map((vendor) => {
+              const uses = usesOf(vendor)
+              const also = alsoUsedIn(vendor)
+              const home = vendor.category_id ? categoryById[vendor.category_id]?.name : null
               const isWorking = workingId === vendor.id
-
               return (
-                <div
-                  key={vendor.id}
-                  className="vendor-row"
-                  style={{
-                    borderBottom:
-                      index === filteredVendors.length - 1 ? 'none' : '1px solid #f3f4f6',
-                  }}
-                >
+                <div key={vendor.id} className="vendor-row">
                   <div style={{ minWidth: 0 }}>
-                    {isEditing ? (
-                      <div
-                        className="vendor-edit-row"
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={editingName}
-                          onChange={(e) => setEditingName(e.target.value)}
-                          style={{
-                            ...inputStyle,
-                            maxWidth: '320px',
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => handleRename(vendor.id)}
-                          disabled={isWorking}
-                          style={buttonPrimary}
-                        >
-                          Save
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={cancelRename}
-                          style={buttonSecondary}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div
-                          style={{
-                            display: 'flex',
-                            gap: '8px',
-                            flexWrap: 'wrap',
-                            alignItems: 'center',
-                            minWidth: 0,
-                          }}
-                        >
-                          <div
-                            style={{
-                              color: '#111827',
-                              fontWeight: 700,
-                              fontSize: '14px',
-                              minWidth: 0,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {vendor.name}
-                          </div>
-
-                          <span
-                            style={{
-                              background: vendor.is_archived === true ? '#e5e7eb' : '#d9f99d',
-                              color: vendor.is_archived === true ? '#4b5563' : '#4d7c0f',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              padding: '2px 7px',
-                              borderRadius: '999px',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                            }}
-                          >
-                            {vendor.is_archived === true ? 'Archived' : 'Active'}
-                          </span>
-                        </div>
-
-                        <div className="vendor-meta">
-                          <span>
-                            {usageCount > 0
-                              ? `Used in ${usageCount} transaction${usageCount === 1 ? '' : 's'}`
-                              : 'Unused'}
-                          </span>
-
-                          {vendor.created_at && <span>{formatDate(vendor.created_at)}</span>}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {!isEditing && (
-                    <div className="vendor-row-actions" style={{ flexShrink: 0 }}>
-                      <RowActionsMenu
-                        items={[
-                          {
-                            label: 'Rename',
-                            onClick: () => startRename(vendor),
-                            disabled: isWorking,
-                          },
-                          {
-                            label: vendor.is_archived === true ? 'Restore' : 'Archive',
-                            onClick: () => handleArchiveToggle(vendor),
-                            disabled: isWorking,
-                          },
-                          {
-                            label: 'Delete',
-                            danger: true,
-                            onClick: () => setDeleteVendor(vendor),
-                            disabled: isWorking,
-                          },
-                        ]}
-                      />
+                    <div className="vendor-name">{vendor.name}</div>
+                    <div className="vendor-meta">
+                      {groupMode === 'az' && <>{home || 'No category'} · </>}
+                      {uses > 0 ? (uses === 1 ? '1 entry' : `${uses} entries`) : 'Not used yet'}
+                      {also.length > 0 && <span className="vendor-also"> · Also used in {also.join(', ')}</span>}
                     </div>
-                  )}
+                  </div>
+                  <RowActionsMenu
+                    items={[
+                      { label: 'Edit', onClick: () => openEdit(vendor), disabled: isWorking },
+                      ...(vendor.is_archived !== true
+                        ? [{ label: 'Merge into another…', onClick: () => openMerge(vendor), disabled: isWorking }]
+                        : []),
+                      {
+                        label: vendor.is_archived === true ? 'Restore' : 'Archive',
+                        onClick: () => handleArchiveToggle(vendor),
+                        disabled: isWorking,
+                      },
+                      { label: 'Delete', danger: true, onClick: () => setDeleteVendor(vendor), disabled: isWorking },
+                    ]}
+                  />
                 </div>
               )
             })}
+          </section>
+        ))
+      )}
+
+      {sheet && (
+        <div className="vendors-sheet-shade" onClick={closeSheet}>
+          <div
+            className="vendors-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label={sheet.kind === 'add' ? 'Add vendor' : sheet.kind === 'edit' ? 'Edit vendor' : 'Merge vendor'}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {sheet.kind === 'merge' && mergeFrom ? (
+              <>
+                <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>Merge &ldquo;{mergeFrom.name}&rdquo;</h2>
+                <label style={labelStyle} htmlFor="merge-keep">
+                  Keep this vendor
+                </label>
+                <select
+                  id="merge-keep"
+                  value={mergeTargetId}
+                  onChange={(e) => setMergeTargetId(e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="">Choose a vendor</option>
+                  {mergeCandidates.map((vendor) => (
+                    <option key={vendor.id} value={String(vendor.id)}>
+                      {vendor.name}
+                    </option>
+                  ))}
+                </select>
+
+                {mergeKeep && (
+                  <div className="vendors-note" style={{ background: '#fff7ed', color: '#9a3412' }}>
+                    {mergeCount > 0 ? (
+                      <>
+                        {mergeCount === 1 ? 'Its 1 entry' : `All ${mergeCount} entries`} of &ldquo;{mergeFrom.name}&rdquo; will
+                        move to <b>{mergeKeep.name}</b>, and &ldquo;{mergeFrom.name}&rdquo; will be removed.
+                      </>
+                    ) : (
+                      <>&ldquo;{mergeFrom.name}&rdquo; has no entries. It will be removed.</>
+                    )}{' '}
+                    This cannot be undone.
+                  </div>
+                )}
+
+                {sheetError && (
+                  <div style={{ marginTop: '10px', color: '#b91c1c', fontSize: '13px', fontWeight: 600 }}>{sheetError}</div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button type="button" onClick={closeSheet} style={buttonSecondary}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleMerge}
+                    disabled={saving || !mergeKeep}
+                    style={{ ...buttonPrimary, opacity: saving || !mergeKeep ? 0.5 : 1 }}
+                  >
+                    {saving ? 'Merging…' : 'Merge'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleSaveVendor}>
+                <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>
+                  {sheet.kind === 'add' ? 'Add vendor' : 'Edit vendor'}
+                </h2>
+
+                <label style={labelStyle} htmlFor="vendor-name">
+                  Name
+                </label>
+                <input
+                  id="vendor-name"
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="e.g. Jaya Grocer"
+                  autoComplete="off"
+                  style={inputStyle}
+                />
+
+                <label style={labelStyle} htmlFor="vendor-home">
+                  Home category
+                </label>
+                <div id="vendor-home">{categorySelect}</div>
+
+                {editMove &&
+                  (editMove.sameType ? (
+                    <label className="vendors-check">
+                      <input
+                        type="checkbox"
+                        checked={moveEntries}
+                        onChange={(e) => setMoveEntries(e.target.checked)}
+                        style={{ width: '18px', height: '18px', margin: 0, flex: 'none' }}
+                      />
+                      <span>
+                        Also move its <b>{editMove.count === 1 ? '1 entry' : `${editMove.count} entries`}</b> from{' '}
+                        {editMove.from.name} to {editMove.to.name}
+                      </span>
+                    </label>
+                  ) : (
+                    <div className="vendors-note" style={{ background: '#f8fafc', color: '#475569' }}>
+                      Its {editMove.count === 1 ? '1 entry stays' : `${editMove.count} entries stay`} in{' '}
+                      {editMove.from.name}, because that is {TYPE_LABELS[editMove.from.type_id]?.toLowerCase()} and{' '}
+                      {editMove.to.name} is {TYPE_LABELS[editMove.to.type_id]?.toLowerCase()}.
+                    </div>
+                  ))}
+
+                {sheetError && (
+                  <div style={{ marginTop: '10px', color: '#b91c1c', fontSize: '13px', fontWeight: 600 }}>{sheetError}</div>
+                )}
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button type="button" onClick={closeSheet} style={buttonSecondary}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={saving} style={{ ...buttonPrimary, opacity: saving ? 0.6 : 1 }}>
+                    {saving ? 'Saving…' : sheet.kind === 'add' ? 'Add vendor' : 'Save'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
       <ConfirmModal
         open={!!deleteVendor}
         title="Delete vendor"
-        message="This action cannot be undone."
+        message={
+          deleteVendor && usesOf(deleteVendor) > 0
+            ? `${deleteVendor.name} has entries, so it cannot be deleted. Archive or merge it instead.`
+            : 'This cannot be undone.'
+        }
         danger
         onCancel={() => setDeleteVendor(null)}
         onConfirm={() => {
@@ -690,17 +923,8 @@ export default function VendorsPage() {
         }}
       />
 
-      <Toast
-        message={successMessage}
-        type="success"
-        onClose={() => setSuccessMessage('')}
-      />
-
-      <Toast
-        message={errorMessage}
-        type="error"
-        onClose={() => setErrorMessage('')}
-      />
+      <Toast message={successMessage} type="success" onClose={() => setSuccessMessage('')} />
+      <Toast message={errorMessage} type="error" onClose={() => setErrorMessage('')} />
     </main>
   )
 }

@@ -1,14 +1,15 @@
 'use client'
 
+// Categories: grouped by Expense / Income / Investment, with entry and vendor
+// counts, add, edit (name, and type while unused) and archive.
+
 import Link from 'next/link'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchAllRows } from '@/lib/fetchAll'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import Toast from '@/components/Toast'
-
-type CategoryType = 'Expense' | 'Income' | 'Investment'
-type SortMode = 'custom' | 'name_asc' | 'name_desc'
 
 type CategoryRow = {
   id: number
@@ -16,29 +17,25 @@ type CategoryRow = {
   type_id: number
   is_active?: boolean
   is_archived?: boolean
-  sort_order?: number | null
 }
 
-function typeIdToLabel(typeId: number): CategoryType {
-  if (typeId === 1) return 'Expense'
-  if (typeId === 2) return 'Income'
-  return 'Investment'
-}
+type UsageRow = { category_id: number | null; vendor_id: number | null }
 
-function labelToTypeId(label: CategoryType) {
-  if (label === 'Expense') return 1
-  if (label === 'Income') return 2
-  return 3
-}
+type SheetState = { kind: 'add' } | { kind: 'edit'; category: CategoryRow } | null
 
-function getTypeBadgeStyle(type: CategoryType): CSSProperties {
-  if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
-  if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
-  return { background: '#dbeafe', color: '#1d4ed8' }
+const TYPES = [
+  { id: 1, label: 'Expense' },
+  { id: 2, label: 'Income' },
+  { id: 3, label: 'Investment' },
+]
+
+function typeLabel(typeId: number) {
+  return TYPES.find((type) => type.id === typeId)?.label || 'Other'
 }
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<CategoryRow[]>([])
+  const [usage, setUsage] = useState<UsageRow[]>([])
   const [loading, setLoading] = useState(true)
 
   const [errorMessage, setErrorMessage] = useState('')
@@ -46,15 +43,12 @@ export default function CategoriesPage() {
 
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active')
   const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState<'All' | CategoryType>('All')
-  const [sortMode, setSortMode] = useState<SortMode>('custom')
 
-  const [newCategoryName, setNewCategoryName] = useState('')
-  const [newCategoryType, setNewCategoryType] = useState<CategoryType>('Expense')
-
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [editingName, setEditingName] = useState('')
-  const [editingType, setEditingType] = useState<CategoryType>('Expense')
+  const [sheet, setSheet] = useState<SheetState>(null)
+  const [formName, setFormName] = useState('')
+  const [formTypeId, setFormTypeId] = useState(1)
+  const [sheetError, setSheetError] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const [workingId, setWorkingId] = useState<number | null>(null)
   const [archiveCategory, setArchiveCategory] = useState<CategoryRow | null>(null)
@@ -62,21 +56,30 @@ export default function CategoriesPage() {
   const fetchData = async () => {
     setLoading(true)
 
-    const { data, error } = await supabase
-      .from('categories')
-      .select('id, name, type_id, is_active, is_archived, sort_order')
-      .order('type_id', { ascending: true })
-      .order('sort_order', { ascending: true })
-      .order('name', { ascending: true })
+    const [categoryRes, usageRes] = await Promise.all([
+      supabase
+        .from('categories')
+        .select('id, name, type_id, is_active, is_archived')
+        .order('type_id', { ascending: true })
+        .order('name', { ascending: true }),
+      fetchAllRows<UsageRow>(() =>
+        supabase
+          .from('transaction')
+          .select('category_id, vendor_id')
+          .not('category_id', 'is', null)
+          .order('id', { ascending: true })
+      ),
+    ])
 
-    if (error) {
-      setErrorMessage(error.message)
+    if (categoryRes.error) {
+      setErrorMessage(categoryRes.error.message)
       setCategories([])
       setLoading(false)
       return
     }
 
-    setCategories((data as CategoryRow[]) || [])
+    setCategories((categoryRes.data as CategoryRow[]) || [])
+    setUsage(usageRes.data || [])
     setLoading(false)
   }
 
@@ -84,142 +87,121 @@ export default function CategoriesPage() {
     fetchData()
   }, [])
 
-  const activeCount = useMemo(
-    () => categories.filter((category) => category.is_archived !== true).length,
-    [categories]
-  )
+  // categoryId -> { entries, vendors }
+  const counts = useMemo(() => {
+    const entries: Record<number, number> = {}
+    const vendorSets: Record<number, Set<number>> = {}
+    usage.forEach((row) => {
+      if (!row.category_id) return
+      entries[row.category_id] = (entries[row.category_id] || 0) + 1
+      if (row.vendor_id) (vendorSets[row.category_id] ||= new Set()).add(row.vendor_id)
+    })
+    return { entries, vendors: (id: number) => vendorSets[id]?.size || 0 }
+  }, [usage])
 
-  const archivedCount = useMemo(
-    () => categories.filter((category) => category.is_archived === true).length,
-    [categories]
-  )
+  const entriesOf = (category: CategoryRow) => counts.entries[category.id] || 0
 
-  const filteredCategories = useMemo(() => {
+  const activeCount = categories.filter((category) => category.is_archived !== true).length
+  const archivedCount = categories.length - activeCount
+
+  const groups = useMemo(() => {
     const query = search.trim().toLowerCase()
+    const rows = categories
+      .filter((category) => (activeTab === 'active' ? category.is_archived !== true : category.is_archived === true))
+      .filter((category) => !query || category.name.toLowerCase().includes(query))
 
-    let rows = categories.filter((category) =>
-      activeTab === 'active' ? category.is_archived !== true : category.is_archived === true
-    )
+    return TYPES.map((type) => ({
+      ...type,
+      categories: rows
+        .filter((category) => category.type_id === type.id)
+        .sort(
+          (a, b) =>
+            (counts.entries[b.id] || 0) - (counts.entries[a.id] || 0) || a.name.localeCompare(b.name)
+        ),
+    })).filter((group) => group.categories.length > 0)
+  }, [categories, activeTab, search, counts])
 
-    if (filterType !== 'All') {
-      const wantedTypeId = labelToTypeId(filterType)
-      rows = rows.filter((category) => category.type_id === wantedTypeId)
-    }
+  function openAdd() {
+    setSheet({ kind: 'add' })
+    setFormName('')
+    setFormTypeId(1)
+    setSheetError('')
+  }
 
-    if (query) {
-      rows = rows.filter((category) => {
-        const typeLabel = typeIdToLabel(category.type_id).toLowerCase()
-        return category.name.toLowerCase().includes(query) || typeLabel.includes(query)
-      })
-    }
+  function openEdit(category: CategoryRow) {
+    setSheet({ kind: 'edit', category })
+    setFormName(category.name)
+    setFormTypeId(category.type_id)
+    setSheetError('')
+  }
 
-    if (sortMode === 'name_asc') {
-      rows = [...rows].sort((a, b) => a.name.localeCompare(b.name))
-    } else if (sortMode === 'name_desc') {
-      rows = [...rows].sort((a, b) => b.name.localeCompare(a.name))
-    } else {
-      rows = [...rows].sort((a, b) => {
-        if ((a.type_id || 0) !== (b.type_id || 0)) return (a.type_id || 0) - (b.type_id || 0)
-        const aSort = a.sort_order ?? 999999
-        const bSort = b.sort_order ?? 999999
-        if (aSort !== bSort) return aSort - bSort
-        return a.name.localeCompare(b.name)
-      })
-    }
+  function closeSheet() {
+    if (!saving) setSheet(null)
+  }
 
-    return rows
-  }, [categories, activeTab, search, filterType, sortMode])
+  // A category's type can change only while it has no entries, so no entry ends
+  // up with a category of the wrong type.
+  const typeLocked = sheet?.kind === 'edit' && entriesOf(sheet.category) > 0
 
-  const handleCreateCategory = async (e: React.FormEvent) => {
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault()
+    if (!sheet) return
 
-    const trimmedName = newCategoryName.trim()
-    if (!trimmedName) {
-      setErrorMessage('Category name is required.')
+    const name = formName.trim().replace(/\s+/g, ' ')
+    if (!name) {
+      setSheetError('Enter a category name.')
       return
     }
 
-    setErrorMessage('')
-    setSuccessMessage('')
+    const editingId = sheet.kind === 'edit' ? sheet.category.id : null
+    const typeId = typeLocked && sheet.kind === 'edit' ? sheet.category.type_id : formTypeId
+    const clash = categories.find(
+      (category) =>
+        category.id !== editingId &&
+        category.type_id === typeId &&
+        category.name.trim().toLowerCase() === name.toLowerCase()
+    )
+    if (clash) {
+      setSheetError(
+        `There is already an ${typeLabel(typeId).toLowerCase()} category called "${clash.name}"${clash.is_archived ? ' (archived)' : ''}.`
+      )
+      return
+    }
 
-    const { error } = await supabase.from('categories').insert([
-      {
-        name: trimmedName,
-        type_id: labelToTypeId(newCategoryType),
-        is_active: true,
-        is_archived: false,
-      },
-    ])
+    setSaving(true)
+    setSheetError('')
+
+    const { error } =
+      sheet.kind === 'add'
+        ? await supabase
+            .from('categories')
+            .insert([{ name, type_id: typeId, is_active: true, is_archived: false, sort_order: 0 }])
+        : await supabase.from('categories').update({ name, type_id: typeId }).eq('id', sheet.category.id)
 
     if (error) {
-      setErrorMessage(error.message)
+      setSaving(false)
+      setSheetError(error.message)
       return
     }
 
-    setSuccessMessage('Category added successfully.')
-    setNewCategoryName('')
-    setNewCategoryType('Expense')
-    await fetchData()
-  }
-
-  const startEdit = (category: CategoryRow) => {
-    setEditingId(category.id)
-    setEditingName(category.name)
-    setEditingType(typeIdToLabel(category.type_id))
-    setErrorMessage('')
-    setSuccessMessage('')
-  }
-
-  const cancelEdit = () => {
-    setEditingId(null)
-    setEditingName('')
-    setEditingType('Expense')
-  }
-
-  const handleSaveEdit = async (categoryId: number) => {
-    const trimmedName = editingName.trim()
-    if (!trimmedName) {
-      setErrorMessage('Category name cannot be empty.')
-      return
+    // Entries also keep the category name as text; keep it in step with a rename.
+    if (sheet.kind === 'edit' && name !== sheet.category.name && entriesOf(sheet.category) > 0) {
+      await supabase.from('transaction').update({ category: name }).eq('category_id', sheet.category.id)
     }
 
-    setWorkingId(categoryId)
-    setErrorMessage('')
-    setSuccessMessage('')
-
-    const { error } = await supabase
-      .from('categories')
-      .update({
-        name: trimmedName,
-        type_id: labelToTypeId(editingType),
-      })
-      .eq('id', categoryId)
-
-    setWorkingId(null)
-
-    if (error) {
-      setErrorMessage(error.message)
-      return
-    }
-
-    setSuccessMessage('Category updated successfully.')
-    cancelEdit()
+    setSaving(false)
+    setSheet(null)
+    setSuccessMessage(sheet.kind === 'add' ? `${name} added.` : `${name} saved.`)
     await fetchData()
   }
 
   const handleArchiveToggle = async (category: CategoryRow) => {
     setWorkingId(category.id)
-    setErrorMessage('')
-    setSuccessMessage('')
-
+    const restoring = category.is_archived === true
     const { error } = await supabase
       .from('categories')
-      .update({
-        is_archived: category.is_archived !== true ? true : false,
-        is_active: category.is_archived === true ? true : false,
-      })
+      .update({ is_archived: !restoring, is_active: restoring })
       .eq('id', category.id)
-
     setWorkingId(null)
 
     if (error) {
@@ -227,31 +209,13 @@ export default function CategoriesPage() {
       return
     }
 
-    setSuccessMessage(
-      category.is_archived === true
-        ? 'Category restored successfully.'
-        : 'Category archived successfully.'
-    )
+    setSuccessMessage(restoring ? `${category.name} restored.` : `${category.name} archived.`)
     await fetchData()
-  }
-
-  const pageWrap: CSSProperties = {
-    maxWidth: '1100px',
-    margin: '0 auto',
-    padding: '16px',
-    fontFamily: 'Arial, sans-serif',
-  }
-
-  const card: CSSProperties = {
-    border: '1px solid #e5e7eb',
-    borderRadius: '14px',
-    background: '#fff',
-    padding: '16px',
   }
 
   const inputStyle: CSSProperties = {
     width: '100%',
-    height: '48px',
+    height: '44px',
     padding: '0 12px',
     borderRadius: '10px',
     border: '1px solid #d1d5db',
@@ -260,9 +224,17 @@ export default function CategoriesPage() {
     boxSizing: 'border-box',
   }
 
+  const labelStyle: CSSProperties = {
+    display: 'block',
+    fontSize: '13px',
+    fontWeight: 700,
+    color: '#374151',
+    margin: '12px 0 6px',
+  }
+
   const buttonPrimary: CSSProperties = {
-    height: '48px',
-    padding: '0 14px',
+    height: '44px',
+    padding: '0 16px',
     borderRadius: '10px',
     border: '1px solid #0f172a',
     background: '#0f172a',
@@ -270,15 +242,11 @@ export default function CategoriesPage() {
     cursor: 'pointer',
     fontWeight: 700,
     fontSize: '14px',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
   }
 
   const buttonSecondary: CSSProperties = {
-    height: '48px',
-    padding: '0 14px',
+    height: '44px',
+    padding: '0 16px',
     borderRadius: '10px',
     border: '1px solid #d1d5db',
     background: '#fff',
@@ -286,406 +254,280 @@ export default function CategoriesPage() {
     cursor: 'pointer',
     fontWeight: 600,
     fontSize: '14px',
-    textDecoration: 'none',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
   }
 
-  const tabButton = (active: boolean): CSSProperties => ({
-    height: '48px',
-    padding: '0 18px',
-    borderRadius: '999px',
-    border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
-    background: active ? '#2563eb' : '#fff',
-    color: active ? '#fff' : '#111827',
-    fontWeight: 700,
-    fontSize: '14px',
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxSizing: 'border-box',
-  })
-
   return (
-    <main style={pageWrap}>
+    <main style={{ maxWidth: '1100px', margin: '0 auto', padding: '16px', fontFamily: 'Arial, sans-serif' }}>
       <style>{`
-        .category-create-form {
-          display: grid;
-          grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.9fr) auto;
-          gap: 10px;
-          align-items: end;
+        .cats-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 12px;
         }
 
-        .category-filter-grid {
-          display: grid;
-          grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr);
-          gap: 10px;
+        .cats-add {
+          height: 40px;
+          padding: 0 16px;
+          border-radius: 999px;
+          border: none;
+          background: #2563eb;
+          color: #fff;
+          font-weight: 800;
+          font-size: 14px;
+          cursor: pointer;
         }
 
-        .category-row {
+        .cats-tabs {
+          display: flex;
+          gap: 16px;
+          margin: 10px 2px 12px;
+        }
+
+        .cats-tab {
+          padding: 4px 0;
+          border: none;
+          border-bottom: 2px solid transparent;
+          background: none;
+          color: #64748b;
+          font: inherit;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .cats-tab.is-on {
+          color: #2563eb;
+          border-bottom-color: #2563eb;
+        }
+
+        .cats-group {
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          background: #fff;
+          margin-bottom: 12px;
+        }
+
+        .cats-group-title {
+          padding: 8px 16px;
+          background: #f1f5f9;
+          border-radius: 14px 14px 0 0;
+          color: #64748b;
+          font-size: 12px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .cat-row {
           display: grid;
           grid-template-columns: minmax(0, 1fr) auto;
           gap: 12px;
-          align-items: start;
-          padding: 12px 16px;
+          align-items: center;
+          padding: 10px 16px;
+          border-top: 1px solid #f1f5f9;
         }
 
-        .category-row-actions .ram-trigger {
-          opacity: 0;
-          transition: opacity 0.15s ease;
+        .cat-name {
+          color: #111827;
+          font-weight: 700;
+          font-size: 14px;
         }
 
-        .category-row:hover .category-row-actions .ram-trigger,
-        .category-row:focus-within .category-row-actions .ram-trigger {
-          opacity: 1;
+        .cat-meta {
+          margin-top: 3px;
+          color: #64748b;
+          font-size: 12px;
+        }
+
+        .cats-sheet-shade {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+          background: rgba(15, 23, 42, 0.45);
+        }
+
+        .cats-sheet {
+          width: 100%;
+          max-width: 440px;
+          box-sizing: border-box;
+          padding: 18px 16px;
+          border-radius: 16px;
+          background: #fff;
         }
 
         @media (max-width: 640px) {
-          .category-page-header {
-            flex-direction: column;
-            align-items: stretch !important;
+          .cats-sheet-shade {
+            align-items: flex-end;
+            padding: 0;
           }
 
-          .category-create-form,
-          .category-filter-grid {
-            grid-template-columns: 1fr !important;
-          }
-
-          .category-row {
-            grid-template-columns: 1fr auto !important;
-          }
-
-          .category-row-actions {
-            justify-self: end;
-            align-self: start;
-          }
-
-          .category-row-actions .ram-trigger {
-            opacity: 1 !important;
-          }
-
-          .category-edit-row {
-            flex-direction: column;
-            align-items: stretch !important;
-          }
-
-          .category-edit-row input,
-          .category-edit-row select {
-            max-width: none !important;
+          .cats-sheet {
+            max-width: none;
+            border-radius: 18px 18px 0 0;
+            padding-bottom: calc(18px + env(safe-area-inset-bottom));
           }
         }
       `}</style>
 
       <div className="hide-on-phone" style={{ marginBottom: '16px' }}>
-        <Link
-          href="/"
-          style={{
-            color: '#2563eb',
-            textDecoration: 'none',
-            fontWeight: 600,
-            fontSize: '14px',
-          }}
-        >
+        <Link href="/" style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 600, fontSize: '14px' }}>
           ← Back to Dashboard
         </Link>
       </div>
 
-      <div
-        className="category-page-header"
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: '12px',
-          flexWrap: 'wrap',
-          marginBottom: '16px',
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Categories</h1>
-          <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: '15px' }}>
-            Manage expense, income, and investment categories.
-          </p>
-        </div>
+      <div className="cats-top">
+        <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Categories</h1>
+        <button type="button" className="cats-add" onClick={openAdd}>
+          + Add
+        </button>
       </div>
 
-      <section style={{ ...card, marginBottom: '16px' }}>
-        <h2
-          style={{
-            marginTop: 0,
-            marginBottom: '14px',
-            fontSize: '0.95rem',
-            letterSpacing: '0.04em',
-            color: '#6b7280',
-            textTransform: 'uppercase',
-          }}
-        >
-          Add New Category
-        </h2>
+      <input
+        type="text"
+        placeholder="Search categories"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        aria-label="Search categories"
+        style={inputStyle}
+      />
 
-        <form className="category-create-form" onSubmit={handleCreateCategory}>
-          <input
-            type="text"
-            placeholder="Category name"
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            style={inputStyle}
-          />
-
-          <select
-            value={newCategoryType}
-            onChange={(e) => setNewCategoryType(e.target.value as CategoryType)}
-            style={inputStyle}
-          >
-            <option value="Expense">Expense</option>
-            <option value="Income">Income</option>
-            <option value="Investment">Investment</option>
-          </select>
-
-          <button type="submit" style={buttonPrimary}>
-            Add Category
-          </button>
-        </form>
-      </section>
-
-      <div
-        style={{
-          display: 'flex',
-          gap: '10px',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          marginBottom: '14px',
-        }}
-      >
+      <div className="cats-tabs">
         <button
           type="button"
+          className={`cats-tab${activeTab === 'active' ? ' is-on' : ''}`}
           onClick={() => setActiveTab('active')}
-          style={tabButton(activeTab === 'active')}
         >
           Active ({activeCount})
         </button>
-
         <button
           type="button"
+          className={`cats-tab${activeTab === 'archived' ? ' is-on' : ''}`}
           onClick={() => setActiveTab('archived')}
-          style={tabButton(activeTab === 'archived')}
         >
           Archived ({archivedCount})
         </button>
       </div>
 
-      <section style={{ ...card, marginBottom: '12px', padding: '14px' }}>
-        <div className="category-filter-grid">
-          <input
-            type="text"
-            placeholder="Search categories..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={inputStyle}
-          />
-
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as 'All' | CategoryType)}
-            style={inputStyle}
-          >
-            <option value="All">All Types</option>
-            <option value="Expense">Expense</option>
-            <option value="Income">Income</option>
-            <option value="Investment">Investment</option>
-          </select>
-
-          <select
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-            style={inputStyle}
-          >
-            <option value="custom">Sort: Custom / Default</option>
-            <option value="name_asc">Sort: Name A–Z</option>
-            <option value="name_desc">Sort: Name Z–A</option>
-          </select>
+      {loading ? (
+        <div style={{ color: '#64748b', fontSize: '14px', padding: '8px 2px' }}>Loading categories...</div>
+      ) : groups.length === 0 ? (
+        <div style={{ color: '#64748b', fontSize: '14px', padding: '8px 2px' }}>
+          {search.trim() ? 'No categories match your search.' : 'No categories here.'}
         </div>
-      </section>
-
-      <section style={{ ...card, padding: 0, overflow: 'hidden' }}>
-        <div
-          style={{
-            padding: '12px 16px',
-            borderBottom: '1px solid #f3f4f6',
-            fontSize: '14px',
-            color: '#6b7280',
-            fontWeight: 600,
-          }}
-        >
-          {loading
-            ? 'Loading categories...'
-            : `${filteredCategories.length} categor${filteredCategories.length === 1 ? 'y' : 'ies'}`}
-        </div>
-
-        {loading ? null : filteredCategories.length === 0 ? (
-          <div
-            style={{
-              padding: '16px',
-              color: '#6b7280',
-              fontSize: '14px',
-            }}
-          >
-            No categories found.
-          </div>
-        ) : (
-          <div>
-            {filteredCategories.map((category, index) => {
-              const categoryType = typeIdToLabel(category.type_id)
-              const isEditing = editingId === category.id
+      ) : (
+        groups.map((group) => (
+          <section key={group.id} className="cats-group" aria-label={group.label}>
+            <div className="cats-group-title">
+              {group.label} · {group.categories.length}
+            </div>
+            {group.categories.map((category) => {
+              const entries = entriesOf(category)
+              const vendors = counts.vendors(category.id)
               const isWorking = workingId === category.id
-
               return (
-                <div
-                  key={category.id}
-                  className="category-row"
-                  style={{
-                    borderBottom:
-                      index === filteredCategories.length - 1 ? 'none' : '1px solid #f3f4f6',
-                  }}
-                >
+                <div key={category.id} className="cat-row">
                   <div style={{ minWidth: 0 }}>
-                    {isEditing ? (
-                      <div
-                        className="category-edit-row"
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={editingName}
-                          onChange={(e) => setEditingName(e.target.value)}
-                          style={{
-                            ...inputStyle,
-                            maxWidth: '260px',
-                          }}
-                        />
-
-                        <select
-                          value={editingType}
-                          onChange={(e) => setEditingType(e.target.value as CategoryType)}
-                          style={{
-                            ...inputStyle,
-                            maxWidth: '180px',
-                          }}
-                        >
-                          <option value="Expense">Expense</option>
-                          <option value="Income">Income</option>
-                          <option value="Investment">Investment</option>
-                        </select>
-
-                        <button
-                          type="button"
-                          onClick={() => handleSaveEdit(category.id)}
-                          disabled={isWorking}
-                          style={buttonPrimary}
-                        >
-                          Save
-                        </button>
-
-                        <button type="button" onClick={cancelEdit} style={buttonSecondary}>
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div
-                        style={{
-                          display: 'flex',
-                          gap: '8px',
-                          flexWrap: 'wrap',
-                          alignItems: 'center',
-                          minWidth: 0,
-                        }}
-                      >
-                        <div
-                          style={{
-                            color: '#111827',
-                            fontWeight: 700,
-                            fontSize: '14px',
-                            minWidth: 0,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {category.name}
-                        </div>
-
-                        <span
-                          style={{
-                            ...getTypeBadgeStyle(categoryType),
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            padding: '2px 7px',
-                            borderRadius: '999px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                          }}
-                        >
-                          {categoryType}
-                        </span>
-
-                        <span
-                          style={{
-                            background: category.is_archived === true ? '#e5e7eb' : '#d9f99d',
-                            color: category.is_archived === true ? '#4b5563' : '#4d7c0f',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            padding: '2px 7px',
-                            borderRadius: '999px',
-                            fontSize: '11px',
-                            fontWeight: 700,
-                          }}
-                        >
-                          {category.is_archived === true ? 'Archived' : 'Active'}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {!isEditing && (
-                    <div className="category-row-actions" style={{ flexShrink: 0 }}>
-                      <RowActionsMenu
-                        items={[
-                          {
-                            label: 'Rename / Edit',
-                            onClick: () => startEdit(category),
-                            disabled: isWorking,
-                          },
-                          {
-                            label: category.is_archived === true ? 'Restore' : 'Archive',
-                            onClick: () => setArchiveCategory(category),
-                            disabled: isWorking,
-                          },
-                        ]}
-                      />
+                    <div className="cat-name">{category.name}</div>
+                    <div className="cat-meta">
+                      {entries === 0 ? 'No entries yet' : entries === 1 ? '1 entry' : `${entries} entries`}
+                      {vendors > 0 && ` · ${vendors === 1 ? '1 vendor' : `${vendors} vendors`}`}
                     </div>
-                  )}
+                  </div>
+                  <RowActionsMenu
+                    items={[
+                      { label: 'Edit', onClick: () => openEdit(category), disabled: isWorking },
+                      {
+                        label: category.is_archived === true ? 'Restore' : 'Archive',
+                        onClick: () => setArchiveCategory(category),
+                        disabled: isWorking,
+                      },
+                    ]}
+                  />
                 </div>
               )
             })}
-          </div>
-        )}
-      </section>
+          </section>
+        ))
+      )}
+
+      {sheet && (
+        <div className="cats-sheet-shade" onClick={closeSheet}>
+          <form
+            className="cats-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label={sheet.kind === 'add' ? 'Add category' : 'Edit category'}
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleSave}
+          >
+            <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#0f172a' }}>
+              {sheet.kind === 'add' ? 'Add category' : 'Edit category'}
+            </h2>
+
+            <label style={labelStyle} htmlFor="category-name">
+              Name
+            </label>
+            <input
+              id="category-name"
+              type="text"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              placeholder="e.g. Travel"
+              autoComplete="off"
+              style={inputStyle}
+            />
+
+            <label style={labelStyle} htmlFor="category-type">
+              Type
+            </label>
+            <select
+              id="category-type"
+              value={formTypeId}
+              onChange={(e) => setFormTypeId(Number(e.target.value))}
+              disabled={typeLocked}
+              style={{ ...inputStyle, background: typeLocked ? '#f1f5f9' : '#fff' }}
+            >
+              {TYPES.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+            {typeLocked && sheet.kind === 'edit' && (
+              <div style={{ marginTop: '6px', color: '#64748b', fontSize: '12px' }}>
+                The type can&apos;t change because {sheet.category.name} already has entries.
+              </div>
+            )}
+
+            {sheetError && (
+              <div style={{ marginTop: '10px', color: '#b91c1c', fontSize: '13px', fontWeight: 600 }}>{sheetError}</div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button type="button" onClick={closeSheet} style={buttonSecondary}>
+                Cancel
+              </button>
+              <button type="submit" disabled={saving} style={{ ...buttonPrimary, opacity: saving ? 0.6 : 1 }}>
+                {saving ? 'Saving…' : sheet.kind === 'add' ? 'Add category' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <ConfirmModal
         open={!!archiveCategory}
         title={archiveCategory?.is_archived ? 'Restore category' : 'Archive category'}
         message={
           archiveCategory?.is_archived
-            ? 'This category will become active again.'
-            : 'This category will be hidden from active selection.'
+            ? 'This category will show in the Add Transaction form again.'
+            : 'This category will be hidden from the Add Transaction form. Past entries keep it.'
         }
         onCancel={() => setArchiveCategory(null)}
         onConfirm={() => {
@@ -694,17 +536,8 @@ export default function CategoriesPage() {
         }}
       />
 
-      <Toast
-        message={successMessage}
-        type="success"
-        onClose={() => setSuccessMessage('')}
-      />
-
-      <Toast
-        message={errorMessage}
-        type="error"
-        onClose={() => setErrorMessage('')}
-      />
+      <Toast message={successMessage} type="success" onClose={() => setSuccessMessage('')} />
+      <Toast message={errorMessage} type="error" onClose={() => setErrorMessage('')} />
     </main>
   )
 }
