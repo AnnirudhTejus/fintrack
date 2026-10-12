@@ -406,7 +406,7 @@ export default function TransactionsPage() {
             ? undefined
             : arrivalSide
               ? `from ${formatMoney(sent, walletCurrency(wallet))}`
-              : `became ${formatMoney(received || 0, walletCurrency(transferWallet))}`,
+              : `received ${formatMoney(received || 0, walletCurrency(transferWallet))}`,
         date: item.date,
         note: item.note,
         title,

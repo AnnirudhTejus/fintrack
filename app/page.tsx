@@ -93,7 +93,7 @@ type DisplayTransaction = {
   note: string | null
   walletName: string | null
   walletType?: WalletRow['type']
-  // Exchange: the other side, e.g. "became ₹ 18,450.00" or "from RM 1,000.00".
+  // Exchange: the other side, e.g. "received ₹ 18,450.00" or "from RM 1,000.00".
   exchangeNote?: string
 }
 
@@ -581,7 +581,7 @@ export default function DashboardPage() {
             ? undefined
             : arrivalSide
               ? `from ${formatMoney(sent, fromCurrency)}`
-              : `became ${formatMoney(received, toCurrency)}`,
+              : `received ${formatMoney(received, toCurrency)}`,
       }
     })
   }, [filteredTransactions, walletMap, categoryMap, vendorMap, viewCurrency])

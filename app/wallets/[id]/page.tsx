@@ -80,7 +80,7 @@ type LedgerDisplayRow = {
   transferFlow: TransferFlowFilter | null
   categoryId: string
   vendorId: number | null
-  // Exchange: the other side, e.g. "became ₹ 18,450.00".
+  // Exchange: the other side, e.g. "received ₹ 18,450.00".
   exchangeNote?: string
 }
 
@@ -381,7 +381,7 @@ export default function WalletLedgerPage() {
         } else {
           direction = 'out'
           transferFlow = 'out'
-          exchangeNote = `became ${formatMoney(received, walletCurrency(destinationWallet))}`
+          exchangeNote = `received ${formatMoney(received, walletCurrency(destinationWallet))}`
         }
       } else if (item.type === 'Income') {
         direction = 'in'
