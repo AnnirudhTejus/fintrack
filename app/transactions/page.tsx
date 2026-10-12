@@ -725,15 +725,11 @@ export default function TransactionsPage() {
   }
 
   const handleEdit = (item: DisplayTransaction) => {
-    if (item.type === 'Transfer') {
-      setErrorMessage('Transfer editing is disabled for now.')
-      return
-    }
-
     setEditingId(item.id)
-    if (item.type === 'Exchange') {
+    // Transfers (same or different currency): the form lets only the amount change.
+    if (item.type === 'Transfer' || item.type === 'Exchange') {
       setFormInitialValues({
-        type: 'Exchange',
+        type: item.type,
         wallet_id: item.wallet_id || null,
         transfer_wallet_id: item.transfer_wallet_id || null,
         amount: String(item.sent_amount),
@@ -1565,11 +1561,8 @@ export default function TransactionsPage() {
                               <RowActionsMenu
                                 items={[
                                   {
-                                    label:
-                                      item.type === 'Transfer'
-                                        ? 'Edit Disabled for Transfer'
-                                        : 'Edit',
-                                    disabled: item.type === 'Transfer' || isWorking,
+                                    label: 'Edit',
+                                    disabled: isWorking,
                                     onClick: () => handleEdit(item),
                                   },
                                   {

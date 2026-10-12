@@ -531,18 +531,14 @@ export default function WalletLedgerPage() {
   }
 
   function handleEdit(row: LedgerDisplayRow) {
-    if (row.type === 'Transfer') {
-      setErrorMessage('Transfer editing is disabled for now.')
-      return
-    }
-
     const source = transactions.find((item) => item.id === row.id)
     if (!source) return
 
     setEditingId(row.id)
-    if (source.type === 'Exchange') {
+    // Transfers (same or different currency): the form lets only the amount change.
+    if (source.type === 'Transfer' || source.type === 'Exchange') {
       setFormInitialValues({
-        type: 'Exchange',
+        type: source.type,
         wallet_id: source.wallet_id || null,
         transfer_wallet_id: source.transfer_wallet_id || null,
         amount: String(source.amount),
@@ -1258,8 +1254,8 @@ export default function WalletLedgerPage() {
                               <RowActionsMenu
                                 items={[
                                   {
-                                    label: row.type === 'Transfer' ? 'Edit Disabled for Transfer' : 'Edit',
-                                    disabled: row.type === 'Transfer' || isWorking,
+                                    label: 'Edit',
+                                    disabled: isWorking,
                                     onClick: () => handleEdit(row),
                                   },
                                   {
