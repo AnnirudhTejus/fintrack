@@ -61,6 +61,7 @@ type VendorRow = {
   name: string
   normalized_name?: string
   is_archived?: boolean
+  category_id?: number | null
 }
 
 type WalletRow = {
@@ -219,6 +220,7 @@ function TransactionsPageContent() {
   // Ticked values; an empty list means all.
   const [filterCategoryIds, setFilterCategoryIds] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false)
   const [filterWalletIds, setFilterWalletIds] = useState<string[]>([])
   const [filterVendorIds, setFilterVendorIds] = useState<string[]>(vendorParam ? [vendorParam] : [])
 
@@ -264,7 +266,7 @@ function TransactionsPageContent() {
         .order('name', { ascending: true }),
       supabase
         .from('vendors')
-        .select('id, name, normalized_name, is_archived')
+        .select('id, name, normalized_name, is_archived, category_id')
         .order('name', { ascending: true }),
       supabase
         .from('categories')
@@ -733,6 +735,31 @@ function TransactionsPageContent() {
     setFilterDateTo(value)
   }
 
+  // Typing in Search suggests matching vendors; picking one makes it a vendor filter.
+  const searchSuggestions = (() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return []
+    return vendors
+      .filter(
+        (vendor) =>
+          vendor.is_archived !== true &&
+          !filterVendorIds.includes(String(vendor.id)) &&
+          vendor.name.toLowerCase().includes(query)
+      )
+      .sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(query) ? 0 : 1
+        const bStarts = b.name.toLowerCase().startsWith(query) ? 0 : 1
+        return aStarts - bStarts || a.name.localeCompare(b.name)
+      })
+      .slice(0, 6)
+  })()
+
+  function pickSearchVendor(vendor: VendorRow) {
+    changeVendors([...filterVendorIds, String(vendor.id)])
+    setSearchQuery('')
+    setShowSearchSuggestions(false)
+  }
+
   // One removable chip per active filter, shown under the filters.
   const filterChips = (() => {
     const chips: Array<{ key: string; label: string; onRemove: () => void }> = []
@@ -1066,6 +1093,59 @@ function TransactionsPageContent() {
           grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
           gap: 8px;
           align-items: center;
+        }
+
+        .tx-search-wrap {
+          position: relative;
+          min-width: 0;
+        }
+
+        .tx-search-suggest {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          right: 0;
+          z-index: 70;
+          overflow: hidden;
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+          background: #fff;
+          box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+        }
+
+        .tx-search-suggest-head {
+          padding: 8px 12px 4px;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .tx-search-suggest-item {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          padding: 10px 12px;
+          border: none;
+          border-top: 1px solid #f1f5f9;
+          background: #fff;
+          color: #111827;
+          font: inherit;
+          font-size: 14px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .tx-search-suggest-item:hover {
+          background: #f8fafc;
+        }
+
+        .tx-search-suggest-meta {
+          color: #94a3b8;
+          font-size: 12px;
+          white-space: nowrap;
         }
 
         .tx-chips {
@@ -1451,17 +1531,51 @@ function TransactionsPageContent() {
           )}
 
           <div className="tx-filters-grid">
-            <input
-              type="text"
-              placeholder="Search vendor, note…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              aria-label="Search"
-              style={{
-                ...inputStyle,
-                ...(searchQuery.trim() ? { borderColor: '#2563eb', background: '#eff6ff' } : {}),
+            <div
+              className="tx-search-wrap"
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setShowSearchSuggestions(false)
               }}
-            />
+            >
+              <input
+                type="text"
+                placeholder="Search vendor, note…"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setShowSearchSuggestions(true)
+                }}
+                onFocus={() => setShowSearchSuggestions(true)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setShowSearchSuggestions(false)
+                }}
+                aria-label="Search"
+                autoComplete="off"
+                style={{
+                  ...inputStyle,
+                  ...(searchQuery.trim() ? { borderColor: '#2563eb', background: '#eff6ff' } : {}),
+                }}
+              />
+              {showSearchSuggestions && searchSuggestions.length > 0 && (
+                <div className="tx-search-suggest" role="listbox" aria-label="Matching vendors">
+                  <div className="tx-search-suggest-head">Vendors</div>
+                  {searchSuggestions.map((vendor) => (
+                    <button
+                      key={vendor.id}
+                      type="button"
+                      className="tx-search-suggest-item"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickSearchVendor(vendor)}
+                    >
+                      <span>{vendor.name}</span>
+                      <span className="tx-search-suggest-meta">
+                        {vendor.category_id ? categoryMap[vendor.category_id]?.name || '' : ''}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <select
               value={filterType}
