@@ -12,6 +12,7 @@ import { isDateInRange } from '@/lib/dateFilters'
 import PeriodFilter, { rangeForPeriod, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
+import TxRow, { TxDayHeader, txRowText } from '@/components/TxRow'
 import Toast from '@/components/Toast'
 import TransactionForm, {
   TransactionFormInitialValues,
@@ -80,6 +81,10 @@ type LedgerDisplayRow = {
   transferFlow: TransferFlowFilter | null
   categoryId: string
   vendorId: number | null
+  vendorName: string | null
+  categoryName: string
+  fromName: string | null
+  toName: string | null
   // Exchange: the other side, e.g. "received ₹ 18,450.00".
   exchangeNote?: string
 }
@@ -146,12 +151,6 @@ function getAmountColor(type: PageTransactionType, direction: 'in' | 'out') {
   return direction === 'in' ? '#166534' : '#b91c1c'
 }
 
-function getTypeBadgeStyle(type: PageTransactionType): CSSProperties {
-  if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
-  if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
-  if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
-  return { background: '#ede9fe', color: '#6d28d9' }
-}
 
 function getWalletBadgeStyle(walletType?: WalletRow['type']): CSSProperties {
   if (walletType === 'cash') return { background: '#fef3c7', color: '#92400e' }
@@ -403,6 +402,10 @@ export default function WalletLedgerPage() {
         transferFlow,
         categoryId: item.category_id ? String(item.category_id) : '',
         vendorId: item.vendor_id,
+        vendorName,
+        categoryName,
+        fromName: sourceWallet?.name || null,
+        toName: destinationWallet?.name || null,
       }
     })
   }, [transactions, walletMap, vendorMap, categoryMap, walletId, wallet])
@@ -1094,181 +1097,49 @@ export default function WalletLedgerPage() {
 
               return (
                 <div key={group.date}>
-                  <div className="wallet-ledger-group-grid" style={{ padding: '0 16px 8px 16px' }}>
-                    <div className="wallet-ledger-group-spacer" />
-                    <div
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: 800,
-                        letterSpacing: '0.03em',
-                        color: '#111827',
-                        textTransform: 'uppercase',
-                      }}
-                    >
-                      {group.label}
-                    </div>
+                  <TxDayHeader label={group.label} parts={totalParts} />
 
-                    <div className="wallet-ledger-group-spacer" />
-
-                    <div
-                      className="wallet-ledger-group-totals"
-                      style={{
-                        justifySelf: 'end',
-                        textAlign: 'right',
-                        fontSize: '13px',
-                        fontWeight: 700,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {totalParts.map((part, index) => (
-                        <span key={`${group.date}-${index}`} style={{ color: part.color }}>
-                          {index > 0 && <span style={{ color: '#94a3b8' }}> · </span>}
-                          {part.text}
-                        </span>
-                      ))}
-                    </div>
-
-                    <div className="wallet-ledger-group-spacer" />
-                  </div>
-
-                  <div
-                    style={{
-                      border: '1px solid #e5e7eb',
-                      borderRadius: '14px',
-                      background: '#fff',
-                    }}
-                  >
-                    {group.rows.map((row, index) => {
+                  <div className="txr-card">
+                    {group.rows.map((row) => {
                       const isWorking = workingId === row.id
-                      const amountColor = getAmountColor(row.type, row.direction)
+                      const text = txRowText({
+                        type: row.type,
+                        vendor: row.vendorName,
+                        category: row.categoryName,
+                        fromName: row.fromName,
+                        toName: row.toName,
+                        flow: row.transferFlow === 'in' || row.transferFlow === 'out' ? row.transferFlow : null,
+                        note: row.note,
+                      })
 
                       return (
-                        <div
+                        <TxRow
                           key={row.id}
                           className="wallet-ledger-row"
-                          style={{
-                            padding: '14px 16px',
-                            borderTop: index === 0 ? 'none' : '1px solid #f1f5f9',
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: '10px',
-                              height: '10px',
-                              borderRadius: '999px',
-                              background: getTypeDotColor(row.type),
-                              marginTop: '6px',
-                            }}
-                          />
-
-                          <div className="wallet-ledger-main">
-                            <div className="wallet-ledger-left">
-                              <div
-                                style={{
-                                  fontWeight: 700,
-                                  fontSize: '15px',
-                                  color: '#111827',
-                                  wordBreak: 'break-word',
-                                  lineHeight: 1.25,
-                                }}
-                              >
-                                {row.title}
-                              </div>
-
-                              <div
-                                style={{
-                                  marginTop: '6px',
-                                  display: 'flex',
-                                  gap: '8px',
-                                  flexWrap: 'wrap',
-                                  alignItems: 'center',
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    ...getTypeBadgeStyle(row.type),
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    padding: '3px 8px',
-                                    borderRadius: '999px',
-                                    fontSize: '12px',
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {row.type === 'Exchange' ? 'Transfer' : row.type}
-                                </span>
-
-                                <span
-                                  style={{
-                                    ...getWalletBadgeStyle(wallet.type),
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    padding: '3px 8px',
-                                    borderRadius: '999px',
-                                    fontSize: '12px',
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {wallet.name}
-                                </span>
-                              </div>
-
-                              {row.note ? <div className="wallet-ledger-note">{row.note}</div> : null}
-                            </div>
-
-                            <div className="wallet-ledger-right">
-                              <div
-                                className="wallet-ledger-flow-col"
-                                style={{
-                                  fontSize: '14px',
-                                  color: '#64748b',
-                                  fontWeight: 600,
-                                  textAlign: 'right',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {row.type === 'Transfer' || row.type === 'Exchange'
-                                  ? `Transfer ${row.transferFlow === 'in' ? 'In' : 'Out'}`
-                                  : row.direction === 'in'
-                                    ? 'Money In'
-                                    : '—'}
-                              </div>
-
-                              <div
-                                style={{
-                                  fontWeight: 700,
-                                  fontSize: '15px',
-                                  color: amountColor,
-                                  textAlign: 'right',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {formatCurrency(row.amount)}
-                                {row.exchangeNote && (
-                                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginTop: '2px' }}>
-                                    {row.exchangeNote}
-                                  </div>
-                                )}
-                              </div>
-
-                              <RowActionsMenu
-                                items={[
-                                  {
-                                    label: 'Edit',
-                                    disabled: isWorking,
-                                    onClick: () => handleEdit(row),
-                                  },
-                                  {
-                                    label: 'Delete',
-                                    danger: true,
-                                    disabled: isWorking,
-                                    onClick: () => setDeleteId(row.id),
-                                  },
-                                ]}
-                              />
-                            </div>
-                          </div>
-                        </div>
+                          title={text.title}
+                          subtitle={text.subtitle}
+                          dotColor={getTypeDotColor(row.type)}
+                          amount={`${row.direction === 'in' ? '+' : ''}${formatCurrency(row.amount)}`}
+                          amountColor={getAmountColor(row.type, row.direction)}
+                          amountNote={row.exchangeNote}
+                          menu={
+                            <RowActionsMenu
+                              items={[
+                                {
+                                  label: 'Edit',
+                                  disabled: isWorking,
+                                  onClick: () => handleEdit(row),
+                                },
+                                {
+                                  label: 'Delete',
+                                  danger: true,
+                                  disabled: isWorking,
+                                  onClick: () => setDeleteId(row.id),
+                                },
+                              ]}
+                            />
+                          }
+                        />
                       )
                     })}
                   </div>

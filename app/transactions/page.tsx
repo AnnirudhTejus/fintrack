@@ -18,6 +18,7 @@ import {
 import PeriodFilter, { formatMonthLabel, rangeForPeriod, type Period } from '@/components/PeriodFilter'
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
+import TxRow, { TxDayHeader, txRowText } from '@/components/TxRow'
 import Toast from '@/components/Toast'
 import TransactionForm, {
   TransactionFormInitialValues,
@@ -165,20 +166,7 @@ function getAmountColor(type: PageTransactionType, direction: 'in' | 'out') {
   return direction === 'in' ? '#166534' : '#b91c1c'
 }
 
-function getTypeBadgeStyle(type: PageTransactionType): React.CSSProperties {
-  if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
-  if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
-  if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
-  return { background: '#ede9fe', color: '#6d28d9' }
-}
 
-function getWalletBadgeStyle(walletType?: WalletRow['type']): React.CSSProperties {
-  if (walletType === 'cash') return { background: '#fef3c7', color: '#92400e' }
-  if (walletType === 'bank') return { background: '#dbeafe', color: '#1d4ed8' }
-  if (walletType === 'card') return { background: '#ffedd5', color: '#c2410c' }
-  if (walletType === 'ewallet') return { background: '#dcfce7', color: '#166534' }
-  return { background: '#e5e7eb', color: '#4b5563' }
-}
 
 function getVisiblePages(currentPage: number, totalPages: number) {
   if (totalPages <= 5) return Array.from({ length: totalPages }, (_, i) => i + 1)
@@ -1052,6 +1040,13 @@ function TransactionsPageContent() {
           line-height: 1.5;
         }
 
+        .tx-context-sub {
+          display: block;
+          font-size: 12px;
+          font-weight: 600;
+          opacity: 0.8;
+        }
+
         .tx-row-grid {
           display: grid;
           grid-template-columns: 14px minmax(0, 1fr) auto;
@@ -1435,23 +1430,6 @@ function TransactionsPageContent() {
       </section>
 
       <section>
-        <div
-          className="tx-list-header"
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '12px',
-            flexWrap: 'wrap',
-            marginBottom: '12px',
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a' }}>All transactions</h2>
-          <div style={{ fontSize: '14px', color: '#64748b', fontWeight: 600 }}>
-            Showing {pageStart}-{pageEnd} of {filteredTransactions.length}
-          </div>
-        </div>
-
         {!loading && filteredTransactions.length > 0 && (
           <div
             className="tx-context-strip"
@@ -1462,6 +1440,11 @@ function TransactionsPageContent() {
             }}
           >
             <span>{summaryLine}</span>
+            {totalPages > 1 && (
+              <span className="tx-context-sub">
+                Showing {pageStart}-{pageEnd} of {filteredTransactions.length}
+              </span>
+            )}
           </div>
         )}
 
@@ -1498,149 +1481,32 @@ function TransactionsPageContent() {
 
                 return (
                   <div key={group.date}>
-                    <div className="tx-group-grid" style={{ padding: '0 16px 8px 16px' }}>
-                      <div className="tx-group-spacer" />
-                      <div
-                        className="tx-group-label"
-                        style={{
-                          fontSize: '14px',
-                          fontWeight: 800,
-                          letterSpacing: '0.03em',
-                          color: '#111827',
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        {group.label}
-                      </div>
+                    <TxDayHeader label={group.label} parts={totalParts} />
 
-                      <div className="tx-group-spacer" />
-
-                      <div
-                        className="tx-group-totals"
-                        style={{
-                          justifySelf: 'end',
-                          textAlign: 'right',
-                          fontSize: '13px',
-                          fontWeight: 700,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {totalParts.map((part, index) => (
-                          <span key={`${group.date}-${index}`} style={{ color: part.color }}>
-                            {index > 0 && <span style={{ color: '#94a3b8' }}> · </span>}
-                            {part.text}
-                          </span>
-                        ))}
-                      </div>
-
-                      <div className="tx-group-spacer" />
-                    </div>
-
-                    <div
-                      style={{
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '14px',
-                        background: '#fff',
-                      }}
-                    >
-                      {group.rows.map((item, index) => {
-                        const amountColor = getAmountColor(item.type, item.direction)
+                    <div className="txr-card">
+                      {group.rows.map((item) => {
                         const isWorking = workingId === item.id
+                        const text = txRowText({
+                          type: item.type,
+                          vendor: item.vendor,
+                          category: item.category,
+                          walletName: item.wallet_name,
+                          fromName: item.wallet_name,
+                          toName: item.transfer_wallet_name,
+                          note: item.note,
+                        })
 
                         return (
-                          <div
+                          <TxRow
                             key={item.id}
-                            className="tx-row tx-row-grid"
-                            style={{
-                              padding: '12px 16px',
-                              borderTop: index === 0 ? 'none' : '1px solid #f1f5f9',
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: '10px',
-                                height: '10px',
-                                borderRadius: '999px',
-                                background: getTypeDotColor(item.type),
-                                marginTop: '6px',
-                              }}
-                            />
-
-                            <div className="tx-content-wrap">
-                              <div className="tx-main-line">
-                                <div className="tx-title-stack">
-                                  <div
-                                    style={{
-                                      fontWeight: 700,
-                                      fontSize: '15px',
-                                      color: '#111827',
-                                      wordBreak: 'break-word',
-                                      lineHeight: 1.25,
-                                    }}
-                                  >
-                                    {item.title}
-                                  </div>
-
-                                  <div
-                                    style={{
-                                      marginTop: '6px',
-                                      display: 'flex',
-                                      gap: '8px',
-                                      flexWrap: 'wrap',
-                                      alignItems: 'center',
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        ...getTypeBadgeStyle(item.type),
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        padding: '3px 8px',
-                                        borderRadius: '999px',
-                                        fontSize: '12px',
-                                        fontWeight: 700,
-                                      }}
-                                    >
-                                      {item.type === 'Exchange' ? 'Transfer' : item.type}
-                                    </span>
-
-                                    <span
-                                      style={{
-                                        ...getWalletBadgeStyle(item.wallet_type),
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        padding: '3px 8px',
-                                        borderRadius: '999px',
-                                        fontSize: '12px',
-                                        fontWeight: 700,
-                                      }}
-                                    >
-                                      {item.wallet_name || 'No wallet'}
-                                    </span>
-                                  </div>
-
-                                  {item.note ? <div className="tx-note-line">{item.note}</div> : null}
-                                </div>
-
-                                <div
-                                  className="tx-amount-wrap"
-                                  style={{
-                                    fontWeight: 700,
-                                    fontSize: '15px',
-                                    color: amountColor,
-                                  }}
-                                >
-                                  {formatCurrency(item.amount)}
-                                  {item.exchange_note && (
-                                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginTop: '2px' }}>
-                                      {item.exchange_note}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="tx-menu-col" style={{ justifySelf: 'end' }}>
+                            className="tx-row"
+                            title={text.title}
+                            subtitle={text.subtitle}
+                            dotColor={getTypeDotColor(item.type)}
+                            amount={`${item.direction === 'in' ? '+' : ''}${formatCurrency(item.amount)}`}
+                            amountColor={getAmountColor(item.type, item.direction)}
+                            amountNote={item.exchange_note}
+                            menu={
                               <RowActionsMenu
                                 items={[
                                   {
@@ -1656,8 +1522,8 @@ function TransactionsPageContent() {
                                   },
                                 ]}
                               />
-                            </div>
-                          </div>
+                            }
+                          />
                         )
                       })}
                     </div>

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import TxRow, { txRowText } from '@/components/TxRow'
 import { fetchAllRows } from '@/lib/fetchAll'
 import { TRANSACTIONS_CHANGED_EVENT } from '@/components/MobileNav'
 import { signOut } from '@/components/AuthGate'
@@ -88,6 +89,8 @@ type DisplayTransaction = {
   id: string
   type: PageTransactionType
   title: string
+  subtitle: string
+  direction: 'in' | 'out'
   amount: number
   date: string
   note: string | null
@@ -95,6 +98,21 @@ type DisplayTransaction = {
   walletType?: WalletRow['type']
   // Exchange: the other side, e.g. "received ₹ 18,450.00" or "from RM 1,000.00".
   exchangeNote?: string
+}
+
+// "12 Oct" for the recent list.
+function formatShortDate(dateString: string) {
+  const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) return dateString
+  return date.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })
+}
+
+// Same colours as the Transactions page.
+function getTypeDotColor(type: PageTransactionType) {
+  if (type === 'Expense') return '#ef4444'
+  if (type === 'Income') return '#65a30d'
+  if (type === 'Investment') return '#3b82f6'
+  return '#8b5cf6'
 }
 
 function formatDate(dateString: string) {
@@ -180,12 +198,6 @@ function dateInRange(dateString: string, start: Date | null, end: Date | null) {
   return true
 }
 
-function getTypeBadgeStyle(type: PageTransactionType): React.CSSProperties {
-  if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
-  if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
-  if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
-  return { background: '#ede9fe', color: '#6d28d9' }
-}
 
 function getWalletBadgeStyle(walletType?: WalletRow['type']): React.CSSProperties {
   if (walletType === 'cash') return { background: '#fef3c7', color: '#92400e' }
@@ -554,10 +566,15 @@ export default function DashboardPage() {
       const vendorName =
         (tx.vendor_id ? vendorMap[tx.vendor_id]?.name : '') || tx.vendor || ''
 
-      const title =
-        tx.type === 'Transfer' || tx.type === 'Exchange'
-          ? `Transfer · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
-          : `${categoryName}${vendorName ? ` · ${vendorName}` : ''}`
+      const text = txRowText({
+        type: tx.type,
+        vendor: vendorName || null,
+        category: categoryName,
+        walletName: wallet?.name,
+        fromName: wallet?.name,
+        toName: transferWallet?.name,
+        dateLabel: formatShortDate(tx.date),
+      })
 
       // An exchange seen from the currency it arrived in shows the received amount.
       const sent = Number(tx.amount) || 0
@@ -569,7 +586,9 @@ export default function DashboardPage() {
       return {
         id: tx.id,
         type: tx.type,
-        title,
+        title: text.title,
+        subtitle: text.subtitle,
+        direction: tx.type === 'Income' || arrivalSide ? 'in' : 'out',
         amount: arrivalSide ? received : sent,
         date: tx.date,
         note: tx.note,
@@ -1400,94 +1419,26 @@ export default function DashboardPage() {
         ) : recentTransactions.length === 0 ? (
           <div style={{ color: '#64748b', fontSize: '14px' }}>No transactions in this period.</div>
         ) : (
-          <div style={{ display: 'grid', gap: '10px' }}>
+          <div className="txr-card">
             {recentTransactions.map((tx) => (
-              <div key={tx.id} className="recent-tx-row">
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontWeight: 700,
-                      fontSize: '14px',
-                      color: '#111827',
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    {tx.title}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: '6px',
-                      display: 'flex',
-                      gap: '8px',
-                      flexWrap: 'wrap',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <span
-                      style={{
-                        ...getTypeBadgeStyle(tx.type),
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '3px 8px',
-                        borderRadius: '999px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {tx.type === 'Exchange' ? 'Transfer' : tx.type}
-                    </span>
-
-                    <span
-                      style={{
-                        ...getWalletBadgeStyle(tx.walletType),
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '3px 8px',
-                        borderRadius: '999px',
-                        fontSize: '12px',
-                        fontWeight: 700,
-                      }}
-                    >
-                      {tx.walletName || 'No wallet'}
-                    </span>
-
-                    <span style={{ fontSize: '12px', color: '#64748b' }}>
-                      {formatDate(tx.date)}
-                    </span>
-                  </div>
-
-                  {tx.note && (
-                    <div style={{ marginTop: '6px', fontSize: '13px', color: '#64748b' }}>
-                      {tx.note}
-                    </div>
-                  )}
-                </div>
-
-                <div
-                  className="recent-tx-value"
-                  style={{
-                    fontWeight: 800,
-                    fontSize: '14px',
-                    color:
-                      tx.type === 'Income'
-                        ? '#166534'
-                        : tx.type === 'Transfer' || tx.type === 'Exchange'
-                          ? '#7c3aed'
-                          : tx.type === 'Investment'
-                            ? '#2563eb'
-                            : '#b91c1c',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {formatCurrency(tx.amount)}
-                  {tx.exchangeNote && (
-                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginTop: '2px' }}>
-                      {tx.exchangeNote}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <TxRow
+                key={tx.id}
+                className="recent-tx-row"
+                title={tx.title}
+                subtitle={tx.subtitle}
+                dotColor={getTypeDotColor(tx.type)}
+                amount={`${tx.direction === 'in' ? '+' : ''}${formatCurrency(tx.amount)}`}
+                amountColor={
+                  tx.type === 'Income'
+                    ? '#166534'
+                    : tx.type === 'Transfer' || tx.type === 'Exchange'
+                      ? '#7c3aed'
+                      : tx.type === 'Investment'
+                        ? '#2563eb'
+                        : '#b91c1c'
+                }
+                amountNote={tx.exchangeNote}
+              />
             ))}
           </div>
         )}
