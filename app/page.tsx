@@ -29,7 +29,7 @@ import PeriodFilter, {
   getWeekStart,
 } from '@/components/PeriodFilter'
 
-type PageTransactionType = TransactionType | 'Transfer'
+type PageTransactionType = TransactionType | 'Transfer' | 'Exchange'
 type TimeFilter = 'week' | 'month' | 'year' | 'all_time' | 'custom'
 
 type TransactionRow = {
@@ -43,6 +43,7 @@ type TransactionRow = {
   wallet_id: number | null
   transfer_wallet_id: number | null
   amount: number
+  received_amount?: number | null
   date: string
   note: string | null
 }
@@ -92,6 +93,8 @@ type DisplayTransaction = {
   note: string | null
   walletName: string | null
   walletType?: WalletRow['type']
+  // Exchange: the other side, e.g. "became ₹ 18,450.00" or "from RM 1,000.00".
+  exchangeNote?: string
 }
 
 function formatDate(dateString: string) {
@@ -181,6 +184,7 @@ function getTypeBadgeStyle(type: PageTransactionType): React.CSSProperties {
   if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
   if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
   if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
+  if (type === 'Exchange') return { background: '#ccfbf1', color: '#115e59' }
   return { background: '#ede9fe', color: '#6d28d9' }
 }
 
@@ -316,7 +320,13 @@ export default function DashboardPage() {
   const viewTransactions = useMemo(() => {
     return transactions.filter((tx) => {
       const walletId = tx.wallet_id ?? tx.transfer_wallet_id
-      return walletCurrency(walletId ? walletMap[walletId] : null) === viewCurrency
+      if (walletCurrency(walletId ? walletMap[walletId] : null) === viewCurrency) return true
+      // An exchange also belongs to the currency it arrived in.
+      return (
+        tx.type === 'Exchange' &&
+        tx.transfer_wallet_id !== null &&
+        walletCurrency(walletMap[tx.transfer_wallet_id]) === viewCurrency
+      )
     })
   }, [transactions, walletMap, viewCurrency])
 
@@ -540,28 +550,41 @@ export default function DashboardPage() {
       const categoryName =
         (tx.category_id ? categoryMap[tx.category_id]?.name : '') ||
         tx.category ||
-        (tx.type === 'Transfer' ? 'Transfer' : 'Uncategorized')
+        (tx.type === 'Transfer' ? 'Transfer' : tx.type === 'Exchange' ? 'Exchange' : 'Uncategorized')
 
       const vendorName =
         (tx.vendor_id ? vendorMap[tx.vendor_id]?.name : '') || tx.vendor || ''
 
       const title =
-        tx.type === 'Transfer'
-          ? `Transfer · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
+        tx.type === 'Transfer' || tx.type === 'Exchange'
+          ? `${tx.type} · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
           : `${categoryName}${vendorName ? ` · ${vendorName}` : ''}`
+
+      // An exchange seen from the currency it arrived in shows the received amount.
+      const sent = Number(tx.amount) || 0
+      const received = Number(tx.received_amount) || 0
+      const fromCurrency = walletCurrency(wallet)
+      const toCurrency = walletCurrency(transferWallet)
+      const arrivalSide = tx.type === 'Exchange' && fromCurrency !== viewCurrency
 
       return {
         id: tx.id,
         type: tx.type,
         title,
-        amount: Number(tx.amount) || 0,
+        amount: arrivalSide ? received : sent,
         date: tx.date,
         note: tx.note,
-        walletName: wallet?.name || null,
-        walletType: wallet?.type,
+        walletName: (arrivalSide ? transferWallet?.name : wallet?.name) || null,
+        walletType: arrivalSide ? transferWallet?.type : wallet?.type,
+        exchangeNote:
+          tx.type !== 'Exchange'
+            ? undefined
+            : arrivalSide
+              ? `from ${formatMoney(sent, fromCurrency)}`
+              : `became ${formatMoney(received, toCurrency)}`,
       }
     })
-  }, [filteredTransactions, walletMap, categoryMap, vendorMap])
+  }, [filteredTransactions, walletMap, categoryMap, vendorMap, viewCurrency])
 
   const handleSaveTransaction = async (values: TransactionFormValues) => {
     setErrorMessage('')
@@ -1452,13 +1475,20 @@ export default function DashboardPage() {
                         ? '#166534'
                         : tx.type === 'Transfer'
                           ? '#7c3aed'
-                          : tx.type === 'Investment'
-                            ? '#2563eb'
-                            : '#b91c1c',
+                          : tx.type === 'Exchange'
+                            ? '#0f766e'
+                            : tx.type === 'Investment'
+                              ? '#2563eb'
+                              : '#b91c1c',
                     whiteSpace: 'nowrap',
                   }}
                 >
                   {formatCurrency(tx.amount)}
+                  {tx.exchangeNote && (
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginTop: '2px' }}>
+                      {tx.exchangeNote}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

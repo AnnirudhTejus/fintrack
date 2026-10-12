@@ -27,6 +27,8 @@ export type BalanceTransaction = {
   date: string
   wallet_id: number | null
   transfer_wallet_id: number | null
+  // Exchange only: what arrived in the other currency.
+  received_amount?: number | string | null
 }
 
 export type WalletPeriodSummary = {
@@ -53,6 +55,15 @@ export function walletEffect(tx: BalanceTransaction, walletId: number) {
     let effect = 0
     if (tx.wallet_id === walletId) effect -= amount
     if (tx.transfer_wallet_id === walletId) effect += amount
+    return effect
+  }
+
+  // Exchange: the sent amount leaves one wallet, the received amount (in the
+  // other currency) arrives in the other.
+  if (tx.type === 'Exchange') {
+    let effect = 0
+    if (tx.wallet_id === walletId) effect -= amount
+    if (tx.transfer_wallet_id === walletId) effect += Number(tx.received_amount) || 0
     return effect
   }
 

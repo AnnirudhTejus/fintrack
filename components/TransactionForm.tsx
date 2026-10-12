@@ -7,7 +7,7 @@ import { currenciesInUse, currencyInfo, useViewCurrency, walletCurrency } from '
 
 export type TransactionType = 'Expense' | 'Income' | 'Investment'
 
-type FormTransactionType = TransactionType | 'Transfer'
+type FormTransactionType = TransactionType | 'Transfer' | 'Exchange'
 
 type CategoryRow = {
   id: number
@@ -40,6 +40,7 @@ export type TransactionFormInitialValues = {
   wallet_id?: number | null
   transfer_wallet_id?: number | null
   amount?: string
+  received_amount?: string
   date?: string
   note?: string
 }
@@ -53,6 +54,8 @@ export type TransactionFormValues = {
   wallet_id: number | null
   transfer_wallet_id: number | null
   amount: number
+  // Exchange only: what arrived in the other wallet's currency.
+  received_amount: number | null
   date: string
   note: string | null
 }
@@ -166,6 +169,7 @@ export default function TransactionForm({
     initialValues?.transfer_wallet_id ? String(initialValues.transfer_wallet_id) : ''
   )
   const [amount, setAmount] = useState(initialValues?.amount || '')
+  const [receivedAmount, setReceivedAmount] = useState(initialValues?.received_amount || '')
   const [date, setDate] = useState(initialValues?.date || todayInputValue())
   const [note, setNote] = useState(initialValues?.note || '')
 
@@ -193,7 +197,7 @@ export default function TransactionForm({
   useEffect(() => {
     if (mode === 'edit') return
 
-    if (type === 'Transfer') {
+    if (type === 'Transfer' || type === 'Exchange') {
       setCategoryId('')
       setSelectedVendorId(null)
       setVendorInput('')
@@ -221,6 +225,7 @@ export default function TransactionForm({
     setWalletId(initialValues?.wallet_id ? String(initialValues.wallet_id) : '')
     setTransferWalletId(initialValues?.transfer_wallet_id ? String(initialValues.transfer_wallet_id) : '')
     setAmount(initialValues?.amount || '')
+    setReceivedAmount(initialValues?.received_amount || '')
     setDate(initialValues?.date || todayInputValue())
     setNote(initialValues?.note || '')
   }, [initialValues])
@@ -230,7 +235,7 @@ export default function TransactionForm({
   }, [wallets])
 
   const categoryOptions = useMemo(() => {
-    if (type === 'Transfer') return []
+    if (type === 'Transfer' || type === 'Exchange') return []
 
     return categories.filter((category) => {
       if (category.is_archived === true) return false
@@ -268,7 +273,9 @@ export default function TransactionForm({
       .slice(0, 8)
   }, [vendors, vendorInput])
 
-  const isTransfer = type === 'Transfer'
+  // Transfer and Exchange both move money between two of your wallets: no category or vendor.
+  const isExchange = type === 'Exchange'
+  const isTransfer = type === 'Transfer' || isExchange
   const isEditMode = mode === 'edit'
 
   // The currency comes from the wallet. The group being viewed elsewhere is listed first.
@@ -276,18 +283,40 @@ export default function TransactionForm({
   const selectedWallet = wallets.find((wallet) => String(wallet.id) === walletId)
   const selectedCurrency = selectedWallet ? currencyInfo(walletCurrency(selectedWallet)) : null
 
-  // Transfers stay within one currency until moving money between currencies is added.
+  // A Transfer stays within one currency; an Exchange goes to a different one.
+  function fitsTarget(kind: FormTransactionType, from: WalletRow | undefined, to: WalletRow) {
+    if (!from) return true
+    const same = walletCurrency(from) === walletCurrency(to)
+    return kind === 'Exchange' ? !same : same
+  }
+
   const transferTargets = activeWallets.filter(
-    (wallet) =>
-      String(wallet.id) !== walletId &&
-      (!selectedWallet || walletCurrency(wallet) === walletCurrency(selectedWallet))
+    (wallet) => String(wallet.id) !== walletId && fitsTarget(type, selectedWallet, wallet)
   )
+  const targetWallet = wallets.find((wallet) => String(wallet.id) === transferWalletId)
+  const targetCurrency = targetWallet ? currencyInfo(walletCurrency(targetWallet)) : null
+
+  // The rate is worked out from the two amounts, never typed.
+  const sentValue = Number(amount)
+  const receivedValue = Number(receivedAmount)
+  const exchangeRate =
+    isExchange && selectedCurrency && targetCurrency && sentValue > 0 && receivedValue > 0
+      ? receivedValue / sentValue
+      : null
+
+  function clearTargetIfNotAllowed(kind: FormTransactionType, fromId: string) {
+    const from = wallets.find((wallet) => String(wallet.id) === fromId)
+    if (from && targetWallet && !fitsTarget(kind, from, targetWallet)) setTransferWalletId('')
+  }
 
   function changeWallet(nextId: string) {
     setWalletId(nextId)
-    const next = wallets.find((wallet) => String(wallet.id) === nextId)
-    const target = wallets.find((wallet) => String(wallet.id) === transferWalletId)
-    if (next && target && walletCurrency(next) !== walletCurrency(target)) setTransferWalletId('')
+    clearTargetIfNotAllowed(type, nextId)
+  }
+
+  function changeType(next: FormTransactionType) {
+    setType(next)
+    clearTargetIfNotAllowed(next, walletId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -315,9 +344,11 @@ export default function TransactionForm({
       return
     }
 
+    let parsedReceived: number | null = null
+
     if (isTransfer) {
       if (!transferWalletId) {
-        setErrorMessage('Transfer wallet is required.')
+        setErrorMessage(isExchange ? 'Choose the wallet the money went to.' : 'Transfer wallet is required.')
         return
       }
 
@@ -326,10 +357,21 @@ export default function TransactionForm({
         return
       }
 
-      const target = wallets.find((wallet) => String(wallet.id) === transferWalletId)
-      if (selectedWallet && target && walletCurrency(selectedWallet) !== walletCurrency(target)) {
-        setErrorMessage('Transfers must be between wallets of the same currency.')
+      if (selectedWallet && targetWallet && !fitsTarget(type, selectedWallet, targetWallet)) {
+        setErrorMessage(
+          isExchange
+            ? 'An exchange must be between wallets of different currencies. Use Transfer for the same currency.'
+            : 'Transfers must be between wallets of the same currency.'
+        )
         return
+      }
+
+      if (isExchange) {
+        parsedReceived = Number(receivedAmount)
+        if (!Number.isFinite(parsedReceived) || parsedReceived <= 0) {
+          setErrorMessage('Amount received must be greater than 0.')
+          return
+        }
       }
     } else {
       if (!categoryId) {
@@ -372,6 +414,7 @@ export default function TransactionForm({
       wallet_id: Number(walletId),
       transfer_wallet_id: isTransfer ? Number(transferWalletId) : null,
       amount: parsedAmount,
+      received_amount: isExchange ? parsedReceived : null,
       date,
       note: trimmedNote || null,
     }
@@ -489,13 +532,14 @@ export default function TransactionForm({
               <label style={labelStyle}>Transaction Type</label>
               <select
                 value={type}
-                onChange={(e) => setType(e.target.value as FormTransactionType)}
+                onChange={(e) => changeType(e.target.value as FormTransactionType)}
                 style={inputStyle}
               >
                 <option value="Expense">Expense</option>
                 <option value="Income">Income</option>
                 <option value="Investment">Investment</option>
                 <option value="Transfer">Transfer</option>
+                <option value="Exchange">Exchange (between currencies)</option>
               </select>
             </div>
           )}
@@ -573,7 +617,7 @@ export default function TransactionForm({
                   value={walletId}
                   onChange={changeWallet}
                   placeholder="Select source wallet"
-                  sheetTitle="Transfer from"
+                  sheetTitle={isExchange ? 'Exchange from' : 'Transfer from'}
                   firstCurrency={viewCurrency}
                   inputStyle={inputStyle}
                 />
@@ -586,11 +630,13 @@ export default function TransactionForm({
                   value={transferWalletId}
                   onChange={setTransferWalletId}
                   placeholder="Select destination wallet"
-                  sheetTitle="Transfer to"
+                  sheetTitle={isExchange ? 'Exchange to' : 'Transfer to'}
                   firstCurrency={viewCurrency}
                   hint={
                     selectedWallet && currenciesInUse(activeWallets).length > 1
-                      ? `Only ${currencyInfo(walletCurrency(selectedWallet)).short} wallets are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. Moving money between currencies will come later.`
+                      ? isExchange
+                        ? `Only wallets in other currencies are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. To move ${currencyInfo(walletCurrency(selectedWallet)).symbol} to ${currencyInfo(walletCurrency(selectedWallet)).symbol}, use Transfer.`
+                        : `Only ${currencyInfo(walletCurrency(selectedWallet)).short} wallets are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. To move money between currencies, use Exchange.`
                       : undefined
                   }
                   inputStyle={inputStyle}
@@ -616,7 +662,7 @@ export default function TransactionForm({
 
           <div className="transaction-form-row-three" style={rowThree}>
             <div>
-              <label style={labelStyle}>Amount</label>
+              <label style={labelStyle}>{isExchange ? 'Amount sent' : 'Amount'}</label>
               <div style={{ position: 'relative' }}>
                 {selectedCurrency && (
                   <span
@@ -652,6 +698,76 @@ export default function TransactionForm({
               </div>
             </div>
 
+            {isExchange ? (
+              <div>
+                <label style={labelStyle}>Amount received</label>
+                <div style={{ position: 'relative' }}>
+                  {targetCurrency && (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute',
+                        left: '12px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        fontWeight: 800,
+                        fontSize: '14px',
+                        color: '#2563eb',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      {targetCurrency.symbol}
+                    </span>
+                  )}
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0.01"
+                    value={receivedAmount}
+                    onChange={(e) => setReceivedAmount(e.target.value)}
+                    placeholder="0.00"
+                    aria-label={targetCurrency ? `Amount received in ${targetCurrency.name}` : 'Amount received'}
+                    style={{
+                      ...inputStyle,
+                      paddingLeft: targetCurrency ? `${20 + targetCurrency.symbol.length * 9}px` : '12px',
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label style={labelStyle}>Date</label>
+                <input
+                  type="date"
+                  value={date}
+                  max={today}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            )}
+          </div>
+
+          {isExchange && exchangeRate !== null && selectedCurrency && targetCurrency && (
+            <div
+              className="transaction-form-rate"
+              style={{
+                background: '#f0fdfa',
+                border: '1px solid #99f6e4',
+                color: '#115e59',
+                borderRadius: '10px',
+                padding: '9px 12px',
+                fontSize: '13px',
+                fontWeight: 700,
+              }}
+            >
+              Rate: 1 {selectedCurrency.symbol} = {targetCurrency.symbol}{' '}
+              {exchangeRate.toLocaleString('en-MY', { maximumFractionDigits: 4 })}
+            </div>
+          )}
+
+          {isExchange && (
             <div>
               <label style={labelStyle}>Date</label>
               <input
@@ -662,7 +778,7 @@ export default function TransactionForm({
                 style={inputStyle}
               />
             </div>
-          </div>
+          )}
 
           <div>
             <label style={labelStyle}>Note</label>

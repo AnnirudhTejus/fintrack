@@ -77,7 +77,8 @@ Repository secrets (Settings > Secrets and variables > Actions):
 
 **Wallet balances** are calculated in one place, `lib/walletBalance.ts`, and used by the dashboard, the wallets page and the wallet ledger.
 
-- Balance = opening balance + income - expense - investment + transfers in - transfers out.
+- Balance = opening balance + income - expense - investment + transfers in - transfers out + exchanges in (amount received) - exchanges out (amount sent).
+- **Exchange** moves money between two of the owner's wallets in different currencies (for example Maybank RM to ICICI ₹). It stores the amount sent (`amount`, in the source wallet's currency) and the amount received (`received_amount`, in the destination's currency); the rate is worked out from the two. It is not income or spending. Sending money to someone else is an Expense.
 - A wallet's opening balance is "as at end of" an optional date. Transactions after that date are added to it. Within the month of that date the balance is worked back to the 1st. Earlier months have no known balance and show a dash.
 - A wallet with no opening date starts from its opening balance at its first transaction. Months before that show a dash.
 - Money in and money out always show what actually moved in a period.
@@ -98,5 +99,6 @@ Repository secrets (Settings > Secrets and variables > Actions):
 |---|---|
 | Oct 2026 | `transaction_date_not_in_future` relaxed to `date <= CURRENT_DATE + 1` |
 | Oct 2026 | `wallets.opening_balance` (numeric, default 0) and `wallets.opening_balance_date` (date) added |
+| Oct 2026 | `transaction.received_amount`, type `Exchange`, rules `transaction_wallet_rules_chk` and `transaction_received_amount_chk` (replacing the two transfer rules), currency trigger: Transfer same currency, Exchange different |
 | Oct 2026 | Row Level Security on all tables, `owner_only` policies via `public.is_owner()`, `anon` access revoked |
 | Oct 2026 | `wallets.currency` (text, default MYR, allowed list), triggers `wallets_currency_locked` and `transaction_same_currency_transfer`, unique wallet name per type and currency |

@@ -42,6 +42,7 @@ type TransactionUsageRow = {
   date: string
   wallet_id: number | null
   transfer_wallet_id: number | null
+  received_amount?: number | null
 }
 
 type WalletListItem = WalletRow & {
@@ -126,7 +127,7 @@ export default function WalletsPage() {
       fetchAllRows(() =>
         supabase
           .from('transaction')
-          .select('type, amount, date, wallet_id, transfer_wallet_id')
+          .select('type, amount, received_amount, date, wallet_id, transfer_wallet_id')
           .order('id', { ascending: true })
       ),
     ])

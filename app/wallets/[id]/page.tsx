@@ -19,7 +19,7 @@ import TransactionForm, {
   TransactionType,
 } from '@/components/TransactionForm'
 
-type PageTransactionType = TransactionType | 'Transfer'
+type PageTransactionType = TransactionType | 'Transfer' | 'Exchange'
 type LedgerTypeFilter = 'All' | PageTransactionType
 type TransferFlowFilter = 'all' | 'in' | 'out'
 
@@ -34,6 +34,7 @@ type TransactionRow = {
   wallet_id: number | null
   transfer_wallet_id: number | null
   amount: number
+  received_amount?: number | null
   date: string
   note: string | null
 }
@@ -79,6 +80,8 @@ type LedgerDisplayRow = {
   transferFlow: TransferFlowFilter | null
   categoryId: string
   vendorId: number | null
+  // Exchange: the other side, e.g. "became ₹ 18,450.00".
+  exchangeNote?: string
 }
 
 type LedgerGroup = {
@@ -88,6 +91,7 @@ type LedgerGroup = {
   expenseTotal: number
   incomeTotal: number
   transferTotal: number
+  exchangeTotal: number
 }
 
 function formatPrettyDate(dateString: string) {
@@ -134,11 +138,13 @@ function getTypeDotColor(type: PageTransactionType) {
   if (type === 'Expense') return '#ef4444'
   if (type === 'Income') return '#65a30d'
   if (type === 'Investment') return '#3b82f6'
+  if (type === 'Exchange') return '#14b8a6'
   return '#8b5cf6'
 }
 
 function getAmountColor(type: PageTransactionType, direction: 'in' | 'out') {
   if (type === 'Transfer') return '#7c3aed'
+  if (type === 'Exchange') return '#0f766e'
   if (type === 'Investment') return '#2563eb'
   return direction === 'in' ? '#166534' : '#b91c1c'
 }
@@ -147,6 +153,7 @@ function getTypeBadgeStyle(type: PageTransactionType): CSSProperties {
   if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
   if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
   if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
+  if (type === 'Exchange') return { background: '#ccfbf1', color: '#115e59' }
   return { background: '#ede9fe', color: '#6d28d9' }
 }
 
@@ -331,8 +338,10 @@ export default function WalletLedgerPage() {
       const categoryName =
         (item.category_id ? categoryMap[item.category_id]?.name : '') ||
         item.category ||
-        (item.type === 'Transfer' ? 'Transfer' : 'Uncategorized')
+        (item.type === 'Transfer' ? 'Transfer' : item.type === 'Exchange' ? 'Exchange' : 'Uncategorized')
 
+      let amount = Number(item.amount) || 0
+      let exchangeNote: string | undefined
       let direction: 'in' | 'out' = 'out'
       let transferFlow: TransferFlowFilter | null = null
       let title = ''
@@ -355,6 +364,25 @@ export default function WalletLedgerPage() {
           transferFlow = 'out'
           title = `Transfer · ${sourceWallet?.name || 'No wallet'} → ${destinationWallet?.name || 'No wallet'}`
         }
+      } else if (item.type === 'Exchange') {
+        // This wallet either sent the money (its own currency) or received it.
+        title = `Exchange · ${sourceWallet?.name || 'No wallet'} → ${destinationWallet?.name || 'No wallet'}`
+        const sent = Number(item.amount) || 0
+        const received = Number(item.received_amount) || 0
+        if (item.transfer_wallet_id === walletId) {
+          direction = 'in'
+          transferFlow = 'in'
+          amount = received
+          walletName = destinationWallet?.name || wallet?.name || null
+          walletType = destinationWallet?.type || wallet?.type
+          transferWalletName = sourceWallet?.name || null
+          transferWalletType = sourceWallet?.type
+          exchangeNote = `from ${formatMoney(sent, walletCurrency(sourceWallet))}`
+        } else {
+          direction = 'out'
+          transferFlow = 'out'
+          exchangeNote = `became ${formatMoney(received, walletCurrency(destinationWallet))}`
+        }
       } else if (item.type === 'Income') {
         direction = 'in'
         title = `${categoryName}${vendorName ? ` · ${vendorName}` : ''}`
@@ -366,7 +394,8 @@ export default function WalletLedgerPage() {
       return {
         id: item.id,
         type: item.type,
-        amount: Number(item.amount) || 0,
+        amount,
+        exchangeNote,
         date: item.date,
         note: item.note,
         title,
@@ -434,6 +463,7 @@ export default function WalletLedgerPage() {
           expenseTotal: 0,
           incomeTotal: 0,
           transferTotal: 0,
+          exchangeTotal: 0,
         }
       }
 
@@ -443,6 +473,8 @@ export default function WalletLedgerPage() {
         groups[item.date].incomeTotal += item.amount
       } else if (item.type === 'Transfer') {
         groups[item.date].transferTotal += item.amount
+      } else if (item.type === 'Exchange') {
+        groups[item.date].exchangeTotal += item.amount
       } else {
         groups[item.date].expenseTotal += item.amount
       }
@@ -509,6 +541,21 @@ export default function WalletLedgerPage() {
     if (!source) return
 
     setEditingId(row.id)
+    if (source.type === 'Exchange') {
+      setFormInitialValues({
+        type: 'Exchange',
+        wallet_id: source.wallet_id || null,
+        transfer_wallet_id: source.transfer_wallet_id || null,
+        amount: String(source.amount),
+        received_amount: source.received_amount == null ? '' : String(source.received_amount),
+        date: source.date,
+        note: source.note || '',
+      })
+      setShowForm(true)
+      setErrorMessage('')
+      setSuccessMessage('')
+      return
+    }
     setFormInitialValues({
       type: source.type as TransactionType,
       category_id: source.category_id ? String(source.category_id) : '',
@@ -982,6 +1029,7 @@ export default function WalletLedgerPage() {
               <option value="Income">Income</option>
               <option value="Investment">Investment</option>
               <option value="Transfer">Transfer</option>
+              <option value="Exchange">Exchange</option>
             </select>
           </div>
 
@@ -1047,6 +1095,13 @@ export default function WalletLedgerPage() {
                 totalParts.push({
                   text: `${formatCurrencyCompact(group.transferTotal)} transfer`,
                   color: '#7c3aed',
+                })
+              }
+
+              if (group.exchangeTotal > 0) {
+                totalParts.push({
+                  text: `${formatCurrencyCompact(group.exchangeTotal)} exchanged`,
+                  color: '#0f766e',
                 })
               }
 
@@ -1185,10 +1240,8 @@ export default function WalletLedgerPage() {
                                   whiteSpace: 'nowrap',
                                 }}
                               >
-                                {row.type === 'Transfer'
-                                  ? row.transferFlow === 'in'
-                                    ? 'Transfer In'
-                                    : 'Transfer Out'
+                                {row.type === 'Transfer' || row.type === 'Exchange'
+                                  ? `${row.type} ${row.transferFlow === 'in' ? 'In' : 'Out'}`
                                   : row.direction === 'in'
                                     ? 'Money In'
                                     : '—'}
@@ -1204,6 +1257,11 @@ export default function WalletLedgerPage() {
                                 }}
                               >
                                 {formatCurrency(row.amount)}
+                                {row.exchangeNote && (
+                                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginTop: '2px' }}>
+                                    {row.exchangeNote}
+                                  </div>
+                                )}
                               </div>
 
                               <RowActionsMenu
