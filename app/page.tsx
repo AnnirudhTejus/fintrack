@@ -184,7 +184,6 @@ function getTypeBadgeStyle(type: PageTransactionType): React.CSSProperties {
   if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
   if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
   if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
-  if (type === 'Exchange') return { background: '#ccfbf1', color: '#115e59' }
   return { background: '#ede9fe', color: '#6d28d9' }
 }
 
@@ -550,14 +549,14 @@ export default function DashboardPage() {
       const categoryName =
         (tx.category_id ? categoryMap[tx.category_id]?.name : '') ||
         tx.category ||
-        (tx.type === 'Transfer' ? 'Transfer' : tx.type === 'Exchange' ? 'Exchange' : 'Uncategorized')
+        (tx.type === 'Transfer' || tx.type === 'Exchange' ? 'Transfer' : 'Uncategorized')
 
       const vendorName =
         (tx.vendor_id ? vendorMap[tx.vendor_id]?.name : '') || tx.vendor || ''
 
       const title =
         tx.type === 'Transfer' || tx.type === 'Exchange'
-          ? `${tx.type} · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
+          ? `Transfer · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
           : `${categoryName}${vendorName ? ` · ${vendorName}` : ''}`
 
       // An exchange seen from the currency it arrived in shows the received amount.
@@ -1436,7 +1435,7 @@ export default function DashboardPage() {
                         fontWeight: 700,
                       }}
                     >
-                      {tx.type}
+                      {tx.type === 'Exchange' ? 'Transfer' : tx.type}
                     </span>
 
                     <span
@@ -1473,13 +1472,11 @@ export default function DashboardPage() {
                     color:
                       tx.type === 'Income'
                         ? '#166534'
-                        : tx.type === 'Transfer'
+                        : tx.type === 'Transfer' || tx.type === 'Exchange'
                           ? '#7c3aed'
-                          : tx.type === 'Exchange'
-                            ? '#0f766e'
-                            : tx.type === 'Investment'
-                              ? '#2563eb'
-                              : '#b91c1c',
+                          : tx.type === 'Investment'
+                            ? '#2563eb'
+                            : '#b91c1c',
                     whiteSpace: 'nowrap',
                   }}
                 >

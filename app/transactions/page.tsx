@@ -104,7 +104,6 @@ type GroupedTransactions = {
   expenseTotal: number
   incomeTotal: number
   transferTotal: number
-  exchangeTotal: number
 }
 
 function formatPrettyDate(dateString: string) {
@@ -156,13 +155,11 @@ function getTypeDotColor(type: PageTransactionType) {
   if (type === 'Expense') return '#ef4444'
   if (type === 'Income') return '#65a30d'
   if (type === 'Investment') return '#3b82f6'
-  if (type === 'Exchange') return '#14b8a6'
   return '#8b5cf6'
 }
 
 function getAmountColor(type: PageTransactionType, direction: 'in' | 'out') {
-  if (type === 'Transfer') return '#7c3aed'
-  if (type === 'Exchange') return '#0f766e'
+  if (type === 'Transfer' || type === 'Exchange') return '#7c3aed'
   if (type === 'Investment') return '#2563eb'
   return direction === 'in' ? '#166534' : '#b91c1c'
 }
@@ -171,7 +168,6 @@ function getTypeBadgeStyle(type: PageTransactionType): React.CSSProperties {
   if (type === 'Expense') return { background: '#fee2e2', color: '#b91c1c' }
   if (type === 'Income') return { background: '#ecfccb', color: '#4d7c0f' }
   if (type === 'Investment') return { background: '#dbeafe', color: '#1d4ed8' }
-  if (type === 'Exchange') return { background: '#ccfbf1', color: '#115e59' }
   return { background: '#ede9fe', color: '#6d28d9' }
 }
 
@@ -371,11 +367,11 @@ export default function TransactionsPage() {
       const resolvedCategory =
         (item.category_id ? categoryMap[item.category_id]?.name : '') ||
         item.category ||
-        (item.type === 'Transfer' ? 'Transfer' : item.type === 'Exchange' ? 'Exchange' : 'Uncategorized')
+        (item.type === 'Transfer' || item.type === 'Exchange' ? 'Transfer' : 'Uncategorized')
 
       const title =
         item.type === 'Transfer' || item.type === 'Exchange'
-          ? `${item.type} · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
+          ? `Transfer · ${wallet?.name || 'No wallet'} → ${transferWallet?.name || 'No wallet'}`
           : `${resolvedCategory}${resolvedVendor ? ` · ${resolvedVendor}` : ''}`
 
       // An exchange seen from the currency it arrived in shows what arrived.
@@ -420,7 +416,7 @@ export default function TransactionsPage() {
       (item) => item.is_archived !== true && item.is_active !== false
     )
 
-    if (filterType === 'Transfer' || filterType === 'Exchange') return []
+    if (filterType === 'Transfer') return []
 
     if (filterType === 'All') {
       return activeRows
@@ -476,7 +472,13 @@ export default function TransactionsPage() {
           walletCurrency(walletMap[item.transfer_wallet_id]) === viewCurrency)
       if (!inView) return false
 
-      const typeMatch = filterType === 'All' ? true : item.type === filterType
+      // "Wallet transfer" covers both same-currency transfers and exchanges.
+      const typeMatch =
+        filterType === 'All'
+          ? true
+          : filterType === 'Transfer'
+            ? item.type === 'Transfer' || item.type === 'Exchange'
+            : item.type === filterType
 
       const categoryMatch =
         filterCategoryId === 'All'
@@ -548,7 +550,6 @@ export default function TransactionsPage() {
           expenseTotal: 0,
           incomeTotal: 0,
           transferTotal: 0,
-          exchangeTotal: 0,
         }
       }
 
@@ -556,10 +557,8 @@ export default function TransactionsPage() {
 
       if (item.type === 'Income') {
         groups[item.date].incomeTotal += item.amount
-      } else if (item.type === 'Transfer') {
+      } else if (item.type === 'Transfer' || item.type === 'Exchange') {
         groups[item.date].transferTotal += item.amount
-      } else if (item.type === 'Exchange') {
-        groups[item.date].exchangeTotal += item.amount
       } else {
         groups[item.date].expenseTotal += item.amount
       }
@@ -592,13 +591,6 @@ export default function TransactionsPage() {
         text: '#1d4ed8',
       }
     }
-    if (filterType === 'Exchange') {
-      return {
-        background: '#f0fdfa',
-        border: '#99f6e4',
-        text: '#115e59',
-      }
-    }
     if (filterType === 'Transfer') {
       return {
         background: '#f5f3ff',
@@ -618,7 +610,6 @@ export default function TransactionsPage() {
     if (filterType === 'Expense') return 'Total expense'
     if (filterType === 'Investment') return 'Total investment'
     if (filterType === 'Transfer') return 'Total transfer'
-    if (filterType === 'Exchange') return 'Total exchanged'
     return 'All transactions'
   }, [filterType])
 
@@ -1313,19 +1304,18 @@ export default function TransactionsPage() {
               <option value="Expense">Expense</option>
               <option value="Income">Income</option>
               <option value="Investment">Investment</option>
-              <option value="Transfer">Transfer</option>
-              <option value="Exchange">Exchange</option>
+              <option value="Transfer">Wallet transfer</option>
             </select>
 
             <select
               value={filterCategoryId}
               onChange={(e) => setFilterCategoryId(e.target.value)}
               style={inputStyle}
-              disabled={filterType === 'Transfer' || filterType === 'Exchange'}
+              disabled={filterType === 'Transfer'}
             >
               <option value="All">
-                {filterType === 'Transfer' || filterType === 'Exchange'
-                  ? `No Category for ${filterType}`
+                {filterType === 'Transfer'
+                  ? 'No Category for transfers'
                   : 'All Categories'}
               </option>
               {availableFilterCategories.map((cat) => (
@@ -1424,13 +1414,6 @@ export default function TransactionsPage() {
                   totalParts.push({
                     text: `${formatCurrencyCompact(group.transferTotal)} transfer`,
                     color: '#7c3aed',
-                  })
-                }
-
-                if (group.exchangeTotal > 0) {
-                  totalParts.push({
-                    text: `${formatCurrencyCompact(group.exchangeTotal)} exchanged`,
-                    color: '#0f766e',
                   })
                 }
 
@@ -1539,7 +1522,7 @@ export default function TransactionsPage() {
                                         fontWeight: 700,
                                       }}
                                     >
-                                      {item.type}
+                                      {item.type === 'Exchange' ? 'Transfer' : item.type}
                                     </span>
 
                                     <span

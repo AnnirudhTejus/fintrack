@@ -273,9 +273,11 @@ export default function TransactionForm({
       .slice(0, 8)
   }, [vendors, vendorInput])
 
-  // Transfer and Exchange both move money between two of your wallets: no category or vendor.
-  const isExchange = type === 'Exchange'
-  const isTransfer = type === 'Transfer' || isExchange
+  // "Wallet transfer" moves money between two of your wallets: no category or vendor.
+  // You never pick Transfer or Exchange: if the two wallets use different
+  // currencies it is saved as an Exchange (with the amount received), otherwise
+  // as a normal Transfer.
+  const isTransfer = type === 'Transfer' || type === 'Exchange'
   const isEditMode = mode === 'edit'
 
   // The currency comes from the wallet. The group being viewed elsewhere is listed first.
@@ -283,18 +285,14 @@ export default function TransactionForm({
   const selectedWallet = wallets.find((wallet) => String(wallet.id) === walletId)
   const selectedCurrency = selectedWallet ? currencyInfo(walletCurrency(selectedWallet)) : null
 
-  // A Transfer stays within one currency; an Exchange goes to a different one.
-  function fitsTarget(kind: FormTransactionType, from: WalletRow | undefined, to: WalletRow) {
-    if (!from) return true
-    const same = walletCurrency(from) === walletCurrency(to)
-    return kind === 'Exchange' ? !same : same
-  }
-
-  const transferTargets = activeWallets.filter(
-    (wallet) => String(wallet.id) !== walletId && fitsTarget(type, selectedWallet, wallet)
-  )
+  const transferTargets = activeWallets.filter((wallet) => String(wallet.id) !== walletId)
   const targetWallet = wallets.find((wallet) => String(wallet.id) === transferWalletId)
   const targetCurrency = targetWallet ? currencyInfo(walletCurrency(targetWallet)) : null
+  const isExchange =
+    isTransfer &&
+    !!selectedWallet &&
+    !!targetWallet &&
+    walletCurrency(selectedWallet) !== walletCurrency(targetWallet)
 
   // The rate is worked out from the two amounts, never typed.
   const sentValue = Number(amount)
@@ -304,19 +302,13 @@ export default function TransactionForm({
       ? receivedValue / sentValue
       : null
 
-  function clearTargetIfNotAllowed(kind: FormTransactionType, fromId: string) {
-    const from = wallets.find((wallet) => String(wallet.id) === fromId)
-    if (from && targetWallet && !fitsTarget(kind, from, targetWallet)) setTransferWalletId('')
-  }
-
   function changeWallet(nextId: string) {
     setWalletId(nextId)
-    clearTargetIfNotAllowed(type, nextId)
+    if (nextId === transferWalletId) setTransferWalletId('')
   }
 
   function changeType(next: FormTransactionType) {
     setType(next)
-    clearTargetIfNotAllowed(next, walletId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -348,21 +340,12 @@ export default function TransactionForm({
 
     if (isTransfer) {
       if (!transferWalletId) {
-        setErrorMessage(isExchange ? 'Choose the wallet the money went to.' : 'Transfer wallet is required.')
+        setErrorMessage('Choose the wallet the money went to.')
         return
       }
 
       if (walletId === transferWalletId) {
         setErrorMessage('Source and destination wallet cannot be the same.')
-        return
-      }
-
-      if (selectedWallet && targetWallet && !fitsTarget(type, selectedWallet, targetWallet)) {
-        setErrorMessage(
-          isExchange
-            ? 'An exchange must be between wallets of different currencies. Use Transfer for the same currency.'
-            : 'Transfers must be between wallets of the same currency.'
-        )
         return
       }
 
@@ -406,7 +389,7 @@ export default function TransactionForm({
         : null
 
     const payload: TransactionFormValues = {
-      type,
+      type: isTransfer ? (isExchange ? 'Exchange' : 'Transfer') : type,
       category: isTransfer ? null : selectedCategory?.name || null,
       category_id: isTransfer ? null : Number(categoryId),
       vendor: isTransfer ? null : vendorTextToUse,
@@ -531,15 +514,14 @@ export default function TransactionForm({
             <div>
               <label style={labelStyle}>Transaction Type</label>
               <select
-                value={type}
+                value={type === 'Exchange' ? 'Transfer' : type}
                 onChange={(e) => changeType(e.target.value as FormTransactionType)}
                 style={inputStyle}
               >
                 <option value="Expense">Expense</option>
                 <option value="Income">Income</option>
                 <option value="Investment">Investment</option>
-                <option value="Transfer">Transfer</option>
-                <option value="Exchange">Exchange (between currencies)</option>
+                <option value="Transfer">Wallet transfer</option>
               </select>
             </div>
           )}
@@ -617,7 +599,7 @@ export default function TransactionForm({
                   value={walletId}
                   onChange={changeWallet}
                   placeholder="Select source wallet"
-                  sheetTitle={isExchange ? 'Exchange from' : 'Transfer from'}
+                  sheetTitle="Transfer from"
                   firstCurrency={viewCurrency}
                   inputStyle={inputStyle}
                 />
@@ -630,15 +612,8 @@ export default function TransactionForm({
                   value={transferWalletId}
                   onChange={setTransferWalletId}
                   placeholder="Select destination wallet"
-                  sheetTitle={isExchange ? 'Exchange to' : 'Transfer to'}
+                  sheetTitle="Transfer to"
                   firstCurrency={viewCurrency}
-                  hint={
-                    selectedWallet && currenciesInUse(activeWallets).length > 1
-                      ? isExchange
-                        ? `Only wallets in other currencies are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. To move ${currencyInfo(walletCurrency(selectedWallet)).symbol} to ${currencyInfo(walletCurrency(selectedWallet)).symbol}, use Transfer.`
-                        : `Only ${currencyInfo(walletCurrency(selectedWallet)).short} wallets are shown, because ${selectedWallet.name} is in ${currencyInfo(walletCurrency(selectedWallet)).short}. To move money between currencies, use Exchange.`
-                      : undefined
-                  }
                   inputStyle={inputStyle}
                 />
               </div>
@@ -657,6 +632,22 @@ export default function TransactionForm({
                 firstCurrency={viewCurrency}
                 inputStyle={inputStyle}
               />
+            </div>
+          )}
+
+          {isExchange && selectedCurrency && targetCurrency && (
+            <div
+              className="transaction-form-exchange-hint"
+              style={{
+                background: '#f0fdfa',
+                color: '#115e59',
+                borderRadius: '10px',
+                padding: '8px 12px',
+                fontSize: '13px',
+                fontWeight: 600,
+              }}
+            >
+              Different currencies ({selectedCurrency.symbol} to {targetCurrency.symbol}), so add what arrived.
             </div>
           )}
 
