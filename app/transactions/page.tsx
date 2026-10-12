@@ -156,6 +156,7 @@ function getTypeDotColor(type: PageTransactionType) {
   if (type === 'Expense') return '#ef4444'
   if (type === 'Income') return '#65a30d'
   if (type === 'Investment') return '#3b82f6'
+  if (type === 'Exchange') return '#14b8a6'
   return '#8b5cf6'
 }
 
