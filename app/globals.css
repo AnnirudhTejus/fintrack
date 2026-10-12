@@ -152,3 +152,173 @@ table {
     padding: 10px 10px 10px 12px;
   }
 }
+
+/* Tick-box dropdown (components/MultiSelect.tsx). */
+.ms-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.ms-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.ms-button:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.ms-button.is-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.ms-button-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-shade {
+  display: none;
+}
+
+.ms-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 70;
+  width: max(100%, 260px);
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+  box-sizing: border-box;
+}
+
+.ms-pop-head,
+.ms-pop-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.ms-pop-head button {
+  border: none;
+  background: none;
+  color: #2563eb;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.ms-pop-title {
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.ms-search {
+  display: block;
+  width: calc(100% - 24px);
+  height: 38px;
+  margin: 0 12px 6px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.ms-list {
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.ms-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  color: #111827;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.ms-item:hover {
+  background: #f8fafc;
+}
+
+.ms-item input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+}
+
+.ms-empty {
+  padding: 12px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ms-done {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .ms-shade {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    background: rgba(15, 23, 42, 0.45);
+  }
+
+  .ms-pop {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 111;
+    width: 100%;
+    border-radius: 18px 18px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .ms-list {
+    max-height: 50vh;
+  }
+}

@@ -19,6 +19,7 @@ import PeriodFilter, { formatMonthLabel, rangeForPeriod, type Period } from '@/c
 import ConfirmModal from '@/components/ConfirmModal'
 import RowActionsMenu from '@/components/RowActionsMenu'
 import TxRow, { TxDayHeader, txRowText } from '@/components/TxRow'
+import MultiSelect from '@/components/MultiSelect'
 import Toast from '@/components/Toast'
 import TransactionForm, {
   TransactionFormInitialValues,
@@ -215,10 +216,11 @@ function TransactionsPageContent() {
   const [successMessage, setSuccessMessage] = useState('')
 
   const [filterType, setFilterType] = useState<FilterType>('All')
-  const [filterCategoryId, setFilterCategoryId] = useState<string>('All')
+  // Ticked values; an empty list means all.
+  const [filterCategoryIds, setFilterCategoryIds] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterWalletId, setFilterWalletId] = useState<string>('All')
-  const [filterVendorId, setFilterVendorId] = useState<string | null>(vendorParam)
+  const [filterWalletIds, setFilterWalletIds] = useState<string[]>([])
+  const [filterVendorIds, setFilterVendorIds] = useState<string[]>(vendorParam ? [vendorParam] : [])
 
   // Opens on This Month; from a vendor's link, on All Time for that vendor.
   const [period, setPeriod] = useState<Period>(() => (vendorParam ? 'all_time' : 'month'))
@@ -308,9 +310,10 @@ function TransactionsPageContent() {
     fetchData()
   }, [])
 
-  function clearVendorFilter() {
-    setFilterVendorId(null)
-    window.history.replaceState(null, '', '/transactions')
+  function changeVendors(next: string[]) {
+    setFilterVendorIds(next)
+    // The address only carries a vendor when arriving from the Vendors page.
+    if (window.location.search) window.history.replaceState(null, '', '/transactions')
   }
 
   // Reload when a transaction is added from the bottom bar's + button.
@@ -346,11 +349,10 @@ function TransactionsPageContent() {
   const formatCurrency = (value: number) => formatMoney(value, viewCurrency)
   const formatCurrencyCompact = (value: number) => formatMoney(value, viewCurrency, 0)
 
-  // A wallet chosen in the filter only applies while its currency is the one shown.
-  const activeWalletFilter =
-    filterWalletId !== 'All' && walletCurrency(walletMap[Number(filterWalletId)]) === viewCurrency
-      ? filterWalletId
-      : 'All'
+  // Wallets ticked in the filter only apply while their currency is the one shown.
+  const activeWalletIds = filterWalletIds.filter(
+    (id) => walletCurrency(walletMap[Number(id)]) === viewCurrency
+  )
 
   const vendorMap = useMemo(() => {
     const map: Record<number, VendorRow> = {}
@@ -453,18 +455,18 @@ function TransactionsPageContent() {
       }))
   }, [categories, filterType])
 
-  useEffect(() => {
-    if (filterCategoryId === 'All') return
-    const exists = availableFilterCategories.some((item) => item.id === filterCategoryId)
-    if (!exists) setFilterCategoryId('All')
-  }, [availableFilterCategories, filterCategoryId])
+  // Categories that no longer fit the chosen type stop counting as filters.
+  const activeCategoryIds = filterCategoryIds.filter((id) =>
+    availableFilterCategories.some((item) => item.id === id)
+  )
 
   useEffect(() => {
     setCurrentPage(1)
   }, [
     filterType,
-    filterCategoryId,
-    filterWalletId,
+    filterCategoryIds,
+    filterWalletIds,
+    filterVendorIds,
     searchQuery,
     filterDateFrom,
     filterDateTo,
@@ -493,17 +495,17 @@ function TransactionsPageContent() {
             : item.type === filterType
 
       const categoryMatch =
-        filterCategoryId === 'All'
+        activeCategoryIds.length === 0
           ? true
           : item.type === 'Transfer' || item.type === 'Exchange'
             ? false
-            : item.category_id === filterCategoryId
+            : activeCategoryIds.includes(item.category_id)
 
       const walletMatch =
-        activeWalletFilter === 'All'
+        activeWalletIds.length === 0
           ? true
-          : String(item.wallet_id || '') === activeWalletFilter ||
-            String(item.transfer_wallet_id || '') === activeWalletFilter
+          : activeWalletIds.includes(String(item.wallet_id || '')) ||
+            activeWalletIds.includes(String(item.transfer_wallet_id || ''))
 
       const searchableText = [
         item.title,
@@ -518,7 +520,7 @@ function TransactionsPageContent() {
 
       const searchMatch = normalizedQuery === '' ? true : searchableText.includes(normalizedQuery)
       const dateMatch = isDateInRange(item.date, filterDateFrom, filterDateTo)
-      const vendorMatch = !filterVendorId || String(item.vendor_id ?? '') === filterVendorId
+      const vendorMatch = filterVendorIds.length === 0 || filterVendorIds.includes(String(item.vendor_id ?? ''))
 
       return typeMatch && categoryMatch && walletMatch && searchMatch && dateMatch && vendorMatch
     })
@@ -527,9 +529,9 @@ function TransactionsPageContent() {
     walletMap,
     viewCurrency,
     filterType,
-    filterCategoryId,
-    filterVendorId,
-    activeWalletFilter,
+    activeCategoryIds,
+    filterVendorIds,
+    activeWalletIds,
     searchQuery,
     filterDateFrom,
     filterDateTo,
@@ -629,21 +631,20 @@ function TransactionsPageContent() {
 
   const summaryContextParts = useMemo(() => {
     const parts: string[] = []
+    // "Grab, Bolt" for one or two; "3 vendors" for more.
+    const named = (names: string[], noun: string) =>
+      names.length <= 2 ? names.join(', ') : `${names.length} ${noun}`
 
-    if (filterVendorId) {
-      const vendorName = vendorMap[Number(filterVendorId)]?.name
-      if (vendorName) parts.push(vendorName)
-    }
+    const vendorNames = filterVendorIds.map((id) => vendorMap[Number(id)]?.name).filter(Boolean) as string[]
+    if (vendorNames.length > 0) parts.push(named(vendorNames, 'vendors'))
 
-    if (activeWalletFilter !== 'All') {
-      const wallet = wallets.find((item) => String(item.id) === activeWalletFilter)
-      if (wallet) parts.push(wallet.name)
-    }
+    const walletNames = activeWalletIds.map((id) => walletMap[Number(id)]?.name).filter(Boolean) as string[]
+    if (walletNames.length > 0) parts.push(named(walletNames, 'wallets'))
 
-    if (filterCategoryId !== 'All') {
-      const category = availableFilterCategories.find((item) => item.id === filterCategoryId)
-      if (category) parts.push(category.name)
-    }
+    const categoryNames = activeCategoryIds
+      .map((id) => availableFilterCategories.find((item) => item.id === id)?.name)
+      .filter(Boolean) as string[]
+    if (categoryNames.length > 0) parts.push(named(categoryNames, 'categories'))
 
     if (period !== 'all_time') {
       if (period === 'week') parts.push('This Week')
@@ -670,11 +671,11 @@ function TransactionsPageContent() {
 
     return parts
   }, [
-    filterVendorId,
+    filterVendorIds,
     vendorMap,
-    activeWalletFilter,
-    wallets,
-    filterCategoryId,
+    activeWalletIds,
+    walletMap,
+    activeCategoryIds,
     availableFilterCategories,
     period,
     monthOffset,
@@ -732,17 +733,54 @@ function TransactionsPageContent() {
     setFilterDateTo(value)
   }
 
+  // One removable chip per active filter, shown under the filters.
+  const filterChips = (() => {
+    const chips: Array<{ key: string; label: string; onRemove: () => void }> = []
+    if (filterType !== 'All') {
+      chips.push({
+        key: 'type',
+        label: filterType === 'Transfer' ? 'Wallet transfer' : filterType,
+        onRemove: () => setFilterType('All'),
+      })
+    }
+    activeCategoryIds.forEach((id) => {
+      const name = availableFilterCategories.find((item) => item.id === id)?.name
+      if (name)
+        chips.push({
+          key: `cat-${id}`,
+          label: name,
+          onRemove: () => setFilterCategoryIds((current) => current.filter((item) => item !== id)),
+        })
+    })
+    activeWalletIds.forEach((id) => {
+      const name = walletMap[Number(id)]?.name
+      if (name)
+        chips.push({
+          key: `wallet-${id}`,
+          label: name,
+          onRemove: () => setFilterWalletIds((current) => current.filter((item) => item !== id)),
+        })
+    })
+    filterVendorIds.forEach((id) => {
+      chips.push({
+        key: `vendor-${id}`,
+        label: vendorMap[Number(id)]?.name || '…',
+        onRemove: () => changeVendors(filterVendorIds.filter((item) => item !== id)),
+      })
+    })
+    if (searchQuery.trim()) {
+      chips.push({ key: 'search', label: `“${searchQuery.trim()}”`, onRemove: () => setSearchQuery('') })
+    }
+    return chips
+  })()
+
+  // Clears every filter (the period stays as it is).
   const clearFilters = () => {
     setFilterType('All')
-    setFilterCategoryId('All')
+    setFilterCategoryIds([])
     setSearchQuery('')
-    setFilterWalletId('All')
-    clearVendorFilter()
-    setPeriod('month')
-    setMonthOffset(0)
-    const range = rangeForPeriod('month', 0)
-    setFilterDateFrom(range.from)
-    setFilterDateTo(range.to)
+    setFilterWalletIds([])
+    changeVendors([])
   }
 
   const resetFormState = () => {
@@ -1025,9 +1063,55 @@ function TransactionsPageContent() {
 
         .tx-filters-grid {
           display: grid;
-          grid-template-columns: minmax(150px, 1fr) minmax(170px, 1fr) minmax(170px, 1fr) minmax(220px, 1.2fr) auto;
+          grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
           gap: 8px;
           align-items: center;
+        }
+
+        .tx-chips {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px;
+          margin-top: 10px;
+          font-size: 13px;
+        }
+
+        .tx-chips-label {
+          color: #64748b;
+          font-weight: 600;
+        }
+
+        .tx-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 4px 4px 10px;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: #1d4ed8;
+          font-weight: 700;
+        }
+
+        .tx-chip button {
+          width: 22px;
+          height: 22px;
+          border: none;
+          border-radius: 999px;
+          background: #dbeafe;
+          color: #1d4ed8;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .tx-chips-clear {
+          border: none;
+          background: none;
+          color: #2563eb;
+          font: inherit;
+          font-weight: 700;
+          cursor: pointer;
+          padding: 4px;
         }
 
         .tx-context-strip {
@@ -1144,7 +1228,7 @@ function TransactionsPageContent() {
 
         @media (max-width: 1100px) {
           .tx-filters-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr)) auto !important;
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
           }
         }
 
@@ -1319,17 +1403,6 @@ function TransactionsPageContent() {
           padding: '12px',
         }}
       >
-        {filterVendorId && (
-          <div className="tx-vendor-chip-row">
-            <span className="tx-vendor-chip">
-              Vendor: {vendorMap[Number(filterVendorId)]?.name || '…'}
-              <button type="button" onClick={clearVendorFilter} aria-label="Show all vendors">
-                ✕
-              </button>
-            </span>
-          </div>
-        )}
-
         <div className="tx-quick-date-row">
           <PeriodFilter
             period={period}
@@ -1343,9 +1416,14 @@ function TransactionsPageContent() {
           <button
             type="button"
             onClick={() => setShowMobileFilters((prev) => !prev)}
-            style={buttonSecondary}
+            style={{
+              ...buttonSecondary,
+              ...(filterChips.length > 0 ? { borderColor: '#2563eb', color: '#1d4ed8' } : {}),
+            }}
           >
-            {showMobileFilters ? 'Hide Filters' : 'Filters'}
+            {showMobileFilters
+              ? 'Hide Filters'
+              : `Filters${filterChips.length > 0 ? ` (${filterChips.length})` : ''}`}
           </button>
           <button type="button" onClick={handleExportCsv} style={buttonSecondary}>
             Export CSV
@@ -1353,80 +1431,104 @@ function TransactionsPageContent() {
         </div>
 
         <div className={`tx-mobile-filter-panel${showMobileFilters ? ' is-open' : ''}`}>
-          <div className="tx-date-inputs">
-            <input
-              type="date"
-              value={filterDateFrom}
-              onChange={(e) => handleFromDateChange(e.target.value)}
-              style={inputStyle}
-            />
-            <input
-              type="date"
-              value={filterDateTo}
-              onChange={(e) => handleToDateChange(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
+          {period === 'custom' && (
+            <div className="tx-date-inputs">
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => handleFromDateChange(e.target.value)}
+                aria-label="From date"
+                style={inputStyle}
+              />
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => handleToDateChange(e.target.value)}
+                aria-label="To date"
+                style={inputStyle}
+              />
+            </div>
+          )}
 
           <div className="tx-filters-grid">
+            <input
+              type="text"
+              placeholder="Search vendor, note…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Search"
+              style={{
+                ...inputStyle,
+                ...(searchQuery.trim() ? { borderColor: '#2563eb', background: '#eff6ff' } : {}),
+              }}
+            />
+
             <select
               value={filterType}
               onChange={(e) => setFilterType(e.target.value as FilterType)}
-              style={inputStyle}
+              aria-label="Filter type"
+              style={{
+                ...inputStyle,
+                ...(filterType !== 'All'
+                  ? { borderColor: '#2563eb', background: '#eff6ff', color: '#1d4ed8', fontWeight: 700 }
+                  : {}),
+              }}
             >
-              <option value="All">All Types</option>
+              <option value="All">All types</option>
               <option value="Expense">Expense</option>
               <option value="Income">Income</option>
               <option value="Investment">Investment</option>
               <option value="Transfer">Wallet transfer</option>
             </select>
 
-            <select
-              value={filterCategoryId}
-              onChange={(e) => setFilterCategoryId(e.target.value)}
-              style={inputStyle}
+            <MultiSelect
+              noun="categories"
+              options={availableFilterCategories.map((cat) => ({ value: cat.id, label: cat.name }))}
+              selected={activeCategoryIds}
+              onChange={setFilterCategoryIds}
               disabled={filterType === 'Transfer'}
-            >
-              <option value="All">
-                {filterType === 'Transfer'
-                  ? 'No Category for transfers'
-                  : 'All Categories'}
-              </option>
-              {availableFilterCategories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={activeWalletFilter}
-              onChange={(e) => setFilterWalletId(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="All">All Wallets</option>
-              {wallets
-                .filter((wallet) => wallet.is_archived !== true && walletCurrency(wallet) === viewCurrency)
-                .map((wallet) => (
-                  <option key={wallet.id} value={String(wallet.id)}>
-                    {wallet.name}
-                  </option>
-                ))}
-            </select>
-
-            <input
-              type="text"
-              placeholder="Search vendor, category, note, wallet..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={inputStyle}
+              disabledText="No categories for transfers"
             />
 
-            <button type="button" onClick={clearFilters} style={buttonSecondary}>
-              Clear
-            </button>
+            <MultiSelect
+              noun="wallets"
+              options={wallets
+                .filter((wallet) => wallet.is_archived !== true && walletCurrency(wallet) === viewCurrency)
+                .map((wallet) => ({ value: String(wallet.id), label: wallet.name }))}
+              selected={activeWalletIds}
+              onChange={setFilterWalletIds}
+            />
+
+            <MultiSelect
+              noun="vendors"
+              searchable
+              options={vendors
+                .filter((vendor) => vendor.is_archived !== true || filterVendorIds.includes(String(vendor.id)))
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((vendor) => ({ value: String(vendor.id), label: vendor.name }))}
+              selected={filterVendorIds}
+              onChange={changeVendors}
+            />
           </div>
         </div>
+
+        {filterChips.length > 0 && (
+          <div className="tx-chips" aria-label="Active filters">
+            <span className="tx-chips-label">Filtered by:</span>
+            {filterChips.map((chip) => (
+              <span key={chip.key} className="tx-chip">
+                {chip.label}
+                <button type="button" onClick={chip.onRemove} aria-label={`Remove ${chip.label}`}>
+                  ✕
+                </button>
+              </span>
+            ))}
+            <button type="button" className="tx-chips-clear" onClick={clearFilters}>
+              Clear all
+            </button>
+          </div>
+        )}
       </section>
 
       <section>
