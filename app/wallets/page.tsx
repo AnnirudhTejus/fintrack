@@ -446,7 +446,8 @@ export default function WalletsPage() {
               },
               {
                 label: 'Edit Wallet',
-                disabled: isWorking,
+                // Archived: only Restore (and viewing the ledger) works.
+                disabled: isWorking || tab === 'archived',
                 onClick: () => openEditOpening(wallet),
               },
               tab === 'active'
@@ -462,8 +463,8 @@ export default function WalletsPage() {
                   },
               {
                 label: 'Delete',
-                danger: true,
-                disabled: isWorking || usageCount > 0,
+                danger: tab === 'active',
+                disabled: isWorking || usageCount > 0 || tab === 'archived',
                 onClick: () => setDeleteId(wallet.id),
               },
             ]}

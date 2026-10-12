@@ -267,6 +267,12 @@ export default function CategoriesPage() {
           margin-bottom: 12px;
         }
 
+        .cats-add:disabled {
+          background: #cbd5e1;
+          color: #f8fafc;
+          cursor: not-allowed;
+        }
+
         .cats-add {
           height: 40px;
           padding: 0 16px;
@@ -383,7 +389,13 @@ export default function CategoriesPage() {
 
       <div className="cats-top">
         <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Categories</h1>
-        <button type="button" className="cats-add" onClick={openAdd}>
+        <button
+          type="button"
+          className="cats-add"
+          onClick={openAdd}
+          disabled={activeTab === 'archived'}
+          title={activeTab === 'archived' ? 'Switch to Active to add a category' : undefined}
+        >
           + Add
         </button>
       </div>
@@ -441,7 +453,12 @@ export default function CategoriesPage() {
                   </div>
                   <RowActionsMenu
                     items={[
-                      { label: 'Edit', onClick: () => openEdit(category), disabled: isWorking },
+                      // Archived: only Restore works.
+                      {
+                        label: 'Edit',
+                        onClick: () => openEdit(category),
+                        disabled: isWorking || category.is_archived === true,
+                      },
                       {
                         label: category.is_archived === true ? 'Restore' : 'Archive',
                         onClick: () => setArchiveCategory(category),

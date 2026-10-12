@@ -518,6 +518,12 @@ export default function VendorsPage() {
           margin-bottom: 12px;
         }
 
+        .vendors-add:disabled {
+          background: #cbd5e1;
+          color: #f8fafc;
+          cursor: not-allowed;
+        }
+
         .vendors-add {
           height: 40px;
           padding: 0 16px;
@@ -710,7 +716,13 @@ export default function VendorsPage() {
 
       <div className="vendors-top">
         <h1 style={{ margin: 0, fontSize: '2rem', color: '#0f172a' }}>Vendors</h1>
-        <button type="button" className="vendors-add" onClick={openAdd}>
+        <button
+          type="button"
+          className="vendors-add"
+          onClick={openAdd}
+          disabled={activeTab === 'archived'}
+          title={activeTab === 'archived' ? 'Switch to Active to add a vendor' : undefined}
+        >
           + Add
         </button>
       </div>
@@ -779,6 +791,7 @@ export default function VendorsPage() {
               const also = alsoUsedIn(vendor)
               const home = vendor.category_id ? categoryById[vendor.category_id]?.name : null
               const isWorking = workingId === vendor.id
+              const isArchived = vendor.is_archived === true
               return (
                 <div key={vendor.id} className="vendor-row">
                   <Link
@@ -794,17 +807,25 @@ export default function VendorsPage() {
                     </div>
                   </Link>
                   <RowActionsMenu
+                    // Archived: only Restore works; everything else is greyed out.
                     items={[
-                      { label: 'Edit', onClick: () => openEdit(vendor), disabled: isWorking },
-                      ...(vendor.is_archived !== true
-                        ? [{ label: 'Merge into another…', onClick: () => openMerge(vendor), disabled: isWorking }]
-                        : []),
+                      { label: 'Edit', onClick: () => openEdit(vendor), disabled: isWorking || isArchived },
                       {
-                        label: vendor.is_archived === true ? 'Restore' : 'Archive',
+                        label: 'Merge into another…',
+                        onClick: () => openMerge(vendor),
+                        disabled: isWorking || isArchived,
+                      },
+                      {
+                        label: isArchived ? 'Restore' : 'Archive',
                         onClick: () => handleArchiveToggle(vendor),
                         disabled: isWorking,
                       },
-                      { label: 'Delete', danger: true, onClick: () => setDeleteVendor(vendor), disabled: isWorking },
+                      {
+                        label: 'Delete',
+                        danger: !isArchived,
+                        onClick: () => setDeleteVendor(vendor),
+                        disabled: isWorking || isArchived,
+                      },
                     ]}
                   />
                 </div>
